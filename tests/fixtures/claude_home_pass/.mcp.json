@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "demo-connector": {"command": "demo-mcp", "args": []}
+  }
+}

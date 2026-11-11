@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ハーネス点検レポート</title>
+<style>
+@page { size: A4; margin: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+  color: #2b2b2b;
+  font-size: 11pt;
+  line-height: 1.7;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  background: #fff;
+}
+.page {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 0 20mm 18mm;
+  position: relative;
+  page-break-after: always;
+  background: #fff;
+}
+.page:last-child { page-break-after: auto; }
+header.pagehead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9pt;
+  color: #fff;
+  background: #D8324A;
+  margin: 0 -20mm 9mm;
+  padding: 4mm 20mm;
+}
+header.pagehead .t { font-weight: 800; letter-spacing: .05em; }
+footer.pagefoot {
+  position: absolute;
+  right: 20mm;
+  bottom: 9mm;
+  font-size: 9pt;
+  color: #999;
+}
+h1 { font-size: 24pt; line-height: 1.35; font-weight: 800; margin-bottom: 6mm; }
+h2 { font-size: 15pt; font-weight: 800; margin: 9mm 0 3mm; padding-left: 3.5mm; border-left: 2mm solid #D8324A; line-height: 1.3; }
+h2.first { margin-top: 0; }
+h3 { font-size: 13pt; font-weight: 800; margin: 6mm 0 2mm; }
+p.note { font-size: 9pt; color: #777; margin-top: 4mm; }
+
+.hero { background: #F8D4DD; margin: -9mm -20mm 0; padding: 9mm 20mm; }
+.hero .intro { font-size: 10pt; color: #9E1F33; margin-bottom: 5mm; }
+.hero-main { display: flex; gap: 9mm; align-items: center; }
+.hero .score-box { display: flex; flex-direction: column; }
+.hero .cap { font-size: 11pt; font-weight: 800; color: #9E1F33; }
+.hero .score-num { font-size: 72pt; font-weight: 800; line-height: .95; color: #D8324A; letter-spacing: -.02em; }
+.hero .of { font-size: 12pt; color: #9E1F33; margin-top: 1mm; font-weight: 700; }
+.hero .typebox { flex: 1; }
+.hero .typebox .now { display: inline-block; font-size: 14pt; font-weight: 800; color: #fff; background: #D8324A; padding: 2mm 5mm; margin-bottom: 2mm; }
+.hero .judged { font-size: 10pt; color: #9E1F33; font-weight: 700; }
+
+table.pillars { width: 100%; border-collapse: collapse; margin-top: 6mm; }
+table.pillars th, table.pillars td { padding: 2.3mm 1.5mm; border-bottom: .6pt solid #eee; vertical-align: middle; text-align: left; }
+table.pillars th { font-size: 11pt; width: 40mm; white-space: nowrap; }
+table.pillars .barcell { width: 50mm; }
+table.pillars .track { height: 4.5mm; background: #F8D4DD; }
+table.pillars .fill { height: 100%; background: #D8324A; }
+table.pillars .pt { width: 24mm; font-size: 9pt; color: #777; white-space: nowrap; text-align: right; }
+table.pillars .pt b { font-size: 13pt; color: #2b2b2b; }
+
+ol.next3 { list-style: none; margin-top: 4mm; }
+ol.next3 li { display: flex; gap: 5mm; align-items: center; padding: 4mm; margin-bottom: 3mm; background: #FDF0F3; }
+ol.next3 .n { font-size: 16pt; font-weight: 800; color: #fff; background: #D8324A; width: 10mm; height: 10mm; line-height: 10mm; text-align: center; flex: none; }
+ol.next3 div.body { flex: 1; }
+ol.next3 b { font-size: 12.5pt; }
+ol.next3 p { font-size: 9.5pt; color: #555; }
+
+.pillar-block { margin-bottom: 7mm; }
+.pillar-head { display: flex; justify-content: space-between; align-items: center; background: #F8D4DD; padding: 2mm 3mm; margin-bottom: 1.5mm; }
+.pillar-head h3 { margin: 0; }
+.pillar-head .rate { font-size: 10pt; color: #9E1F33; font-weight: 700; }
+.pillar-head .rate b { font-size: 15pt; color: #D8324A; }
+
+table.items { width: 100%; border-collapse: collapse; }
+table.items td { padding: 1.3mm 4mm 1.3mm 0; font-size: 10pt; vertical-align: top; }
+table.items td.mk { width: 10mm; font-weight: 800; font-size: 12pt; text-align: center; }
+table.items tr.pass td.mk { color: #D8324A; }
+table.items tr.fail td { font-weight: 700; }
+table.items tr.fail td.mk { color: #2b2b2b; }
+table.items tr.unmeasured td { color: #999; }
+table.items tr.unmeasured td.mk { color: #bbb; }
+table.items td.name { width: 76mm; }
+table.items td.judge { width: 30mm; font-size: 8.5pt; color: #888; white-space: nowrap; }
+table.items td.note { font-size: 11pt; color: #555; }
+table.items thead { display: table-header-group; }
+table.items thead th { text-align: left; font-size: 8.5pt; color: #888; font-weight: 700; padding: 1mm 4mm 1mm 0; border-bottom: .8pt solid #D8324A; }
+
+.statgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3mm; margin-top: 4mm; }
+.statgrid .card { padding: 3mm 4mm; background: #F8D4DD; }
+.statgrid .card .label { font-size: 9pt; color: #9E1F33; font-weight: 700; }
+.statgrid .card .value { font-size: 10pt; color: #2b2b2b; }
+
+table.counttable { width: 100%; border-collapse: collapse; margin-top: 2mm; margin-bottom: 4mm; }
+table.counttable thead { display: table-header-group; }
+table.counttable th, table.counttable td { text-align: left; padding: 1mm 2mm; font-size: 9.5pt; border-bottom: .5pt solid #eee; }
+table.counttable th { background: #F8D4DD; }
+
+ul.blindspots { margin-left: 4mm; font-size: 10pt; }
+ul.blindspots li { margin-bottom: 2mm; }
+.shown-names { font-weight: 700; color: #9E1F33; }
+</style>
+</head>
+<body>
+{{BODY}}
+</body>
+</html>

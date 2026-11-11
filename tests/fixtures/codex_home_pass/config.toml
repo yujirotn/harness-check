@@ -1,0 +1,16 @@
+model = "gpt-test"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[mcp_servers.demo]
+command = "demo-mcp"
+args = []
+
+[mcp_servers.demo.env]
+DEMO_API_TOKEN = "your-api-key-here"
+
+[mcp_servers.demo2]
+command = "demo-mcp2"
+
+[mcp_servers.demo2.env]
+DEMO2_SECRET = "${DEMO2_SECRET_ENV}"

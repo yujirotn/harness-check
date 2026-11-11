@@ -1,0 +1,202 @@
+{
+  "version": 2,
+  "pillars": {
+    "foundation": "土台",
+    "safety": "安全",
+    "grow": "育つ仕組み",
+    "delegate": "任せ方"
+  },
+  "pillar_order": ["foundation", "safety", "grow", "delegate"],
+  "items": [
+    {
+      "id": "F1",
+      "pillar": "foundation",
+      "name": "作業フォルダに指示書がある",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "CLAUDE.md（または AGENTS.md）を作業フォルダに置く"
+    },
+    {
+      "id": "F2",
+      "pillar": "foundation",
+      "name": "毎回読まれる指示ファイルが、どれも長すぎない",
+      "judge": "machine",
+      "merge": "all",
+      "fix_text": "長すぎる指示ファイルを分けるか短くする"
+    },
+    {
+      "id": "F3",
+      "pillar": "foundation",
+      "name": "指示が具体的で、守れたか確かめられるか",
+      "judge": "ai",
+      "merge": "any",
+      "ai_question": "作業フォルダ用の指示書を読んだ。指示は具体的で、守れたかどうかを確かめられる書き方になっているか。",
+      "fix_text": "指示を具体的にし、守れたか確かめられる書き方にする"
+    },
+    {
+      "id": "F4",
+      "pillar": "foundation",
+      "name": "矛盾する指示がない",
+      "judge": "ai",
+      "merge": "all",
+      "ai_question": "起動時に読まれる指示ファイル全体を読んだ。互いに矛盾する指示は無いか（矛盾が無ければ「はい」、矛盾があれば「いいえ」）。",
+      "fix_text": "矛盾している指示を見つけて揃える"
+    },
+    {
+      "id": "F5",
+      "pillar": "foundation",
+      "name": "自分で用意したスキルがある",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "自分用のスキルを作る"
+    },
+    {
+      "id": "F6",
+      "pillar": "foundation",
+      "name": "自分で用意したスキルが、直近30日に1回以上使われた",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "作ったスキルを実際に使う"
+    },
+    {
+      "id": "F7",
+      "pillar": "foundation",
+      "name": "スキルの説明文に「何をするか」と「いつ使うか」がある",
+      "judge": "ai",
+      "merge": "any",
+      "ai_question": "直近30日の使用回数が多い順に最大5本（使用記録が無ければ更新日の新しい順に最大5本）の自作スキルについて、説明文を読んだ。すべてに「何をするか」と「いつ使うか」の両方が書かれているか（1本でも欠けていれば「いいえ」）。",
+      "fix_text": "スキルの説明文に「何をするか」と「いつ使うか」を書き足す"
+    },
+    {
+      "id": "F8",
+      "pillar": "foundation",
+      "name": "エージェントの定義がある",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "自分用のエージェントを定義する"
+    },
+    {
+      "id": "F9",
+      "pillar": "foundation",
+      "name": "自分で定義したエージェントが、直近30日に1回以上使われた",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "定義したエージェントを実際に使う"
+    },
+    {
+      "id": "F10",
+      "pillar": "foundation",
+      "name": "コネクタが1つ以上ある",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "外部サービスとつながるコネクタ（MCPサーバー）を足す"
+    },
+    {
+      "id": "F11",
+      "pillar": "foundation",
+      "name": "コネクタが、直近30日に1回以上使われた",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "つないだコネクタを実際に使う"
+    },
+    {
+      "id": "S1",
+      "pillar": "safety",
+      "name": "よくある形のキーが、コードや設定に直接書かれていない",
+      "judge": "machine",
+      "merge": "all",
+      "fix_text": "コード・設定に直接書かれたキーを環境変数などに移す"
+    },
+    {
+      "id": "S2",
+      "pillar": "safety",
+      "name": "秘密ファイルを読ませない設定がある",
+      "judge": "machine",
+      "merge": "all",
+      "fix_text": "秘密ファイル（.env等）を読ませない設定を足す"
+    },
+    {
+      "id": "S3",
+      "pillar": "safety",
+      "name": "取り返しのつかない操作が、承認制か禁止になっている",
+      "judge": "machine",
+      "merge": "all",
+      "fix_text": "削除・強制上書き・送信・公開を承認制か禁止にする"
+    },
+    {
+      "id": "S4",
+      "pillar": "safety",
+      "name": "既定のモードが「全部許す」になっていない",
+      "judge": "machine",
+      "merge": "all",
+      "fix_text": "既定のモードを「全部許す」から変える"
+    },
+    {
+      "id": "G1",
+      "pillar": "grow",
+      "name": "指示書がGitで管理され、リモートにもある",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "指示書をGitで管理し、リモートにも上げる"
+    },
+    {
+      "id": "G2",
+      "pillar": "grow",
+      "name": "個人用と共有用の指示が分かれている",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "個人用と共有用の指示を分ける"
+    },
+    {
+      "id": "G3",
+      "pillar": "grow",
+      "name": "人が書かなくても、記録が残る仕組みがある",
+      "judge": "machine_ai",
+      "merge": "any",
+      "ai_question": "会話の終わりや区切りで動く仕組み（フック・定時実行）を見つけた。その名前と中身から判断して、これは「記録を残す仕組み」か（AIが自動でメモを取るだけの機能は含めない）。",
+      "fix_text": "会話の終わりや区切りで記録が残る仕組みを足す"
+    },
+    {
+      "id": "D1",
+      "pillar": "delegate",
+      "name": "いつもの安全な操作は、確認なしで通る",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "いつもの安全な操作が確認なしで通るよう許可設定を足す"
+    },
+    {
+      "id": "D2",
+      "pillar": "delegate",
+      "name": "繰り返す仕事が、人が起動しなくても始まり、直近30日に動いた",
+      "judge": "machine_user",
+      "merge": "any",
+      "user_question": "定時実行の定義は見つかったが、直近30日に動いた記録（出力やログの更新）を確認できなかった。直近30日のうちに、この定時実行は実際に動きましたか。",
+      "fix_text": "繰り返す仕事を人が起動しなくても始まる形にする"
+    },
+    {
+      "id": "D3",
+      "pillar": "delegate",
+      "name": "終わる前の確認を、仕組みがやっている",
+      "judge": "machine_ai",
+      "merge": "any",
+      "ai_question": "終了時に動くフックも、読むだけに絞った確認役のエージェントも見つからなかった。指示書に「終える前に確かめる」という決まりが書かれているか。",
+      "fix_text": "終わる前の確認を仕組み（フックや確認役）に任せる"
+    },
+    {
+      "id": "D4",
+      "pillar": "delegate",
+      "name": "役割の違うエージェントが、人を挟まずに続けて動いた記録が1件以上ある",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "役割の違うエージェントを人を挟まず続けて動かす"
+    },
+    {
+      "id": "D5",
+      "pillar": "delegate",
+      "name": "人の発言を挟まずに、20回以上続けて動いた会話が1件以上ある",
+      "judge": "machine",
+      "merge": "any",
+      "fix_text": "人の発言を挟まず仕組みに任せて動かす場面を増やす"
+    }
+  ]
+}

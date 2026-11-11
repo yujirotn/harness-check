@@ -1,0 +1,9 @@
+model = "gpt-test"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[mcp_servers.demo]
+command = "demo-mcp"
+
+[mcp_servers.demo.env]
+DEMO_API_TOKEN = "69ebc2c640a5bf43d254ff004ff8a274"

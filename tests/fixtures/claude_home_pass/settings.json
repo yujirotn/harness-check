@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": ["Bash(ls:*)", "Read(./**)"],
+    "deny": ["Read(./.env)", "Read(./**/*.pem)", "Bash(rm -rf /:*)", "Bash(git push --force:*)"],
+    "ask": [],
+    "defaultMode": "default"
+  },
+  "hooks": {
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "echo done"}]}
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+{"type": "user", "uuid": "f001", "parentUuid": null, "timestamp": "2026-08-01T09:00:00Z", "message": {"role": "user", "content": "old task"}}
+{"type": "assistant", "uuid": "f002", "parentUuid": null, "timestamp": "2026-08-01T09:00:01Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "ts1", "name": "Skill", "input": {"skill": "demo-skill"}}]}}
+{"type": "user", "uuid": "f003", "parentUuid": null, "timestamp": "2026-08-01T09:00:02Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "ts1", "content": "ok"}]}}
+{"type": "user", "uuid": "f004", "parentUuid": null, "timestamp": "2026-08-01T09:00:00Z", "message": {"role": "user", "content": "old task"}}
+{"type": "assistant", "uuid": "f005", "parentUuid": null, "timestamp": "2026-08-01T09:00:01Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "ta1", "name": "Agent", "input": {"subagent_type": "demo-agent"}}]}}
+{"type": "user", "uuid": "f006", "parentUuid": null, "timestamp": "2026-08-01T09:00:02Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "ta1", "content": "ok"}]}}
+{"type": "user", "uuid": "f007", "parentUuid": null, "timestamp": "2026-08-01T09:00:00Z", "message": {"role": "user", "content": "old task"}}
+{"type": "assistant", "uuid": "f008", "parentUuid": null, "timestamp": "2026-08-01T09:00:01Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "ta2", "name": "Agent", "input": {"subagent_type": "demo-agent-2"}}]}}
+{"type": "user", "uuid": "f009", "parentUuid": null, "timestamp": "2026-08-01T09:00:02Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "ta2", "content": "ok"}]}}
+{"type": "user", "uuid": "f010", "parentUuid": null, "timestamp": "2026-08-01T09:00:00Z", "message": {"role": "user", "content": "ありがとう"}}
