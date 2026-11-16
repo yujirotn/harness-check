@@ -11,7 +11,17 @@ import argparse
 import json
 import math
 import os
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import inventory as inventory_mod  # noqa: E402
+import reasons  # noqa: E402
+
+RESULT_SCHEMA_VERSION = 3
+# facts.json の版。項目ごとの理由に使う数（件数・行数など）が入っているのは 3 から
+SUPPORTED_FACTS_VERSIONS = (3,)
 
 
 JUDGE_LABELS = {
@@ -224,6 +234,12 @@ def main() -> int:
 
     with facts_path.open("r", encoding="utf-8") as fh:
         facts = json.load(fh)
+    if facts.get("schema_version") not in SUPPORTED_FACTS_VERSIONS:
+        print(
+            f"facts.json の版（{facts.get('schema_version')}）がこの score.py と合いません。"
+            "collect.py からやり直してください。"
+        )
+        return 2
     with items_path.open("r", encoding="utf-8") as fh:
         items_def = json.load(fh)
 
@@ -248,17 +264,26 @@ def main() -> int:
     next_fixes = compute_next_fixes(scored_items, items_def_by_id)
 
     items_result = {}
+    replaced = 0
     for s in scored_items:
-        items_result[s["id"]] = {
-            "name": items_def_by_id[s["id"]]["name"],
+        iid = s["id"]
+        # 理由は決まった文の型だけで作る。ai_judgments.json の中の文（AIが書いた理由など）は使わない
+        reason, reason_facts, was_replaced = reasons.build_reason_checked(
+            items_def_by_id[iid], facts["items"].get(iid, {}), s, ai_judgments
+        )
+        replaced += int(was_replaced)
+        items_result[iid] = {
+            "name": items_def_by_id[iid]["name"],
             "pillar": s["pillar"],
             "judge": s["judge"],
             "judge_label": s["judge_label"],
             "status": s["status"],
+            "reason": reason,
+            "facts": reason_facts,
         }
 
     result = {
-        "schema_version": facts["schema_version"],
+        "schema_version": RESULT_SCHEMA_VERSION,
         "score": score,
         "judged_item_count": judged_total,
         "total_item_count": len(items_def["items"]),
@@ -272,6 +297,23 @@ def main() -> int:
         "window_days": facts.get("window_days", 30),
     }
 
+    # 説明の一覧（5-9）。名前の一覧は手元用の ai_targets.json にだけある。読めなければ説明は全部置き換える
+    needles = None
+    targets_path = out_dir / "ai_targets.json"
+    if targets_path.exists():
+        with targets_path.open("r", encoding="utf-8") as fh:
+            inv_targets = (json.load(fh) or {}).get("INVENTORY") or {}
+        names = list(inv_targets.get("other_names") or [])
+        for kind in inventory_mod.KINDS:
+            names += [str(v.get("name", "")) for v in (inv_targets.get(kind) or {}).values() if isinstance(v, dict)]
+        needles = inventory_mod.name_needles(names)
+    inv, inv_truncated, inv_replaced = inventory_mod.build_inventory(
+        facts.get("inventory"), ai_judgments.get("INVENTORY"), needles
+    )
+    result["inventory"] = inv
+    result["reference"] = dict(result["reference"], inventory_truncated=inv_truncated,
+                               inventory_summaries_replaced=inv_replaced)
+
     result_path = out_dir / "result.json"
     with result_path.open("w", encoding="utf-8") as fh:
         json.dump(result, fh, ensure_ascii=False, indent=2, sort_keys=True)
@@ -280,6 +322,12 @@ def main() -> int:
     print(f"result.json を書きました: {result_path}")
     print(f"点数: {score} / 判定できた項目: {judged_total}/{len(items_def['items'])}")
     print(f"型: {type_name}")
+    if replaced:
+        print(f"注意: 理由の文 {replaced} 件が検査に通らず、定型文に置き換えました（文の型の不具合です）。")
+    total_inv = sum(len(v) for v in inv.values())
+    n_rep = sum(inv_replaced.values())
+    if total_inv:
+        print(f"説明の一覧: {total_inv}件（うち {n_rep} 件は「{inventory_mod.FALLBACK_SUMMARY}」に置き換え）")
     return 0
 
 

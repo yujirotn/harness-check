@@ -117,13 +117,20 @@ def render_pillar_pages(result: dict) -> str:
         rows = []
         for iid, item in items:
             status = item["status"]
+            reason = item.get("reason")
+            # v3 から項目ごとの理由がある。v2 の result.json には無いので、そのときは出さない
+            reason_row = (
+                f"""<tr class="reason-row"><td></td><td colspan="3" class="reason">{esc(reason)}</td></tr>"""
+                if isinstance(reason, str) and reason
+                else ""
+            )
             rows.append(
-                f"""<tr class="{status}">
+                f"""<tbody class="item"><tr class="{status}">
   <td class="mk">{STATUS_MARK[status]}</td>
   <td class="name">{esc(iid)}　{esc(item['name'])}</td>
   <td class="judge">{esc(item['judge_label'])}</td>
   <td class="note">{STATUS_NOTE[status]}</td>
-</tr>"""
+</tr>{reason_row}</tbody>"""
             )
         rate = p.get("rate")
         rate_display = f"{int(round(rate * 100))}点" if rate is not None else "判定できず"
@@ -134,9 +141,8 @@ def render_pillar_pages(result: dict) -> str:
 <div class="pillar-head"><h3>{esc(p['name'])}</h3><span class="rate"><b>{esc(p['passed_count'])}</b> / {esc(p['judged_count'])}（{rate_display}）</span></div>
 <table class="items">
 <thead><tr><th class="mk"></th><th class="name">項目</th><th class="judge">判定の種類</th><th class="note">結果</th></tr></thead>
-<tbody>
 {''.join(rows)}
-</tbody></table>
+</table>
 </div>
 <p class="note">○＝満たしている／×＝満たしていない／―＝測定できず。判定の種類は「機械」「AIの判断」「機械＋AIの判断」「機械＋本人の回答」のいずれか。</p>
 <footer class="pagefoot">{esc(p['name'])}</footer>
