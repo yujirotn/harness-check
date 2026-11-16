@@ -234,5 +234,34 @@ class MeaninglessIdentifierUnitTest(unittest.TestCase):
         self.assertFalse(render.is_meaningless_identifier("dev-loop"))
 
 
+class ItemReasonTest(unittest.TestCase):
+    """v3: 項目ごとの理由をレポートに出す。v2（理由なし）でも壊れない。"""
+
+    def _html(self, result):
+        template = (REPO_ROOT / "templates" / "report.html").read_text(encoding="utf-8")
+        return render.build_html(template, result)
+
+    def test_v3_reason_is_shown_and_escaped(self):
+        result = minimal_result(schema_version=3)
+        result["items"]["F1"] = dict(result["items"]["F1"], reason="指示書が2件あり、1件以上という基準を満たしています。<b>x</b>",
+                                     facts=[{"label": "指示書の数", "value": "2件"}])
+        out = self._html(result)
+        self.assertIn("指示書が2件あり、1件以上という基準を満たしています。", out)
+        self.assertIn("&lt;b&gt;x&lt;/b&gt;", out)
+        self.assertIn('class="reason"', out)
+
+    def test_v2_without_reason_still_renders(self):
+        result = minimal_result()
+        out = self._html(result)
+        self.assertNotIn('class="reason"', out)
+        self.assertIn("作業フォルダに指示書がある", out)
+
+    def test_non_string_reason_is_ignored(self):
+        result = minimal_result(schema_version=3)
+        result["items"]["F1"] = dict(result["items"]["F1"], reason=None, facts=None)
+        out = self._html(result)
+        self.assertNotIn('class="reason"', out)
+
+
 if __name__ == "__main__":
     unittest.main()

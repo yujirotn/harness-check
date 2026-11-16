@@ -153,6 +153,12 @@ def own_agent_files(workdir: Path, claude_home: Path) -> list[Path]:
 
 
 def mcp_config_present(workdir: Path, claude_home: Path) -> bool:
+    return mcp_server_count(workdir, claude_home) > 0
+
+
+def mcp_server_count(workdir: Path, claude_home: Path) -> int:
+    """設定に書かれた外部接続（MCPサーバー）の数。名前は数えるためだけに使い、外に出さない。"""
+    names: set[str] = set()
     candidates = [claude_home / ".mcp.json"]
     for d in common.walk_up_to_git_root(workdir):
         candidates.append(d / ".mcp.json")
@@ -167,9 +173,9 @@ def mcp_config_present(workdir: Path, claude_home: Path) -> bool:
         except Exception:
             continue
         servers = data.get("mcpServers") if isinstance(data, dict) else None
-        if isinstance(servers, dict) and len(servers) > 0:
-            return True
-    return False
+        if isinstance(servers, dict):
+            names |= {str(k) for k in servers}
+    return len(names)
 
 
 def _load_settings_json(path: Path) -> Optional[dict]:
@@ -233,24 +239,34 @@ _DESTRUCTIVE_PATTERN_WORDS = (
 )
 
 
-def deny_or_ask_blocks_secret_files(perms: dict) -> bool:
-    rules = perms.get("deny", []) + perms.get("ask", [])
-    for rule in rules:
+def secret_file_rule_count(perms: dict) -> int:
+    """禁止か承認の設定のうち、秘密ファイルの読み取りを止める行の数。"""
+    n = 0
+    for rule in perms.get("deny", []) + perms.get("ask", []):
         low = rule.lower()
         if "read(" not in low and "read " not in low:
             continue
         if any(w in low for w in _SECRET_FILE_PATTERN_WORDS):
-            return True
-    return False
+            n += 1
+    return n
+
+
+def destructive_rule_count(perms: dict) -> int:
+    """禁止か承認の設定のうち、削除・強制上書き・送信・公開を対象にした行の数。"""
+    n = 0
+    for rule in perms.get("deny", []) + perms.get("ask", []):
+        low = rule.lower()
+        if any(w in low for w in _DESTRUCTIVE_PATTERN_WORDS):
+            n += 1
+    return n
+
+
+def deny_or_ask_blocks_secret_files(perms: dict) -> bool:
+    return secret_file_rule_count(perms) > 0
 
 
 def deny_or_ask_blocks_destructive_ops(perms: dict) -> bool:
-    rules = perms.get("deny", []) + perms.get("ask", [])
-    for rule in rules:
-        low = rule.lower()
-        if any(w in low for w in _DESTRUCTIVE_PATTERN_WORDS):
-            return True
-    return False
+    return destructive_rule_count(perms) > 0
 
 
 BYPASS_ALL_MODES = {"bypasspermissions", "yolo", "dangerously-skip-permissions"}
@@ -273,9 +289,17 @@ def default_mode_is_auto_judging(perms: dict) -> bool:
     return mode.strip().lower() in AUTO_JUDGING_MODES
 
 
+_STOP_HOOK_EVENTS = ("Stop", "SubagentStop", "SessionEnd")
+
+
+def stop_hook_count(perms: dict) -> int:
+    hooks = perms.get("hooks", {})
+    return sum(hooks.get(k, 0) for k in _STOP_HOOK_EVENTS)
+
+
 def has_stop_hook(perms: dict) -> bool:
     hooks = perms.get("hooks", {})
-    return any(k in hooks for k in ("Stop", "SubagentStop", "SessionEnd"))
+    return any(k in hooks for k in _STOP_HOOK_EVENTS)
 
 
 def readonly_review_agents(workdir: Path, claude_home: Path) -> list[Path]:
@@ -345,23 +369,24 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
     facts: dict = {}
 
     local_files = local_instruction_files(workdir)
-    facts["F1"] = {"measured": True, "pass": len(local_files) > 0}
+    facts["F1"] = {"measured": True, "pass": len(local_files) > 0, "count": len(local_files)}
 
     startup = startup_files(workdir, claude_home)
-    total_lines = sum(common.count_lines(common.read_text_capped(f) or "") for f in startup)
+    line_counts = [common.count_lines(common.read_text_capped(f) or "") for f in startup]
     facts["F2"] = {
         "measured": len(startup) > 0,
-        "pass": all(
-            common.count_lines(common.read_text_capped(f) or "") < MAX_STARTUP_LINES for f in startup
-        )
-        if startup
-        else None,
-        "total_lines": total_lines,
+        "pass": all(n < MAX_STARTUP_LINES for n in line_counts) if startup else None,
+        "total_lines": sum(line_counts),
         "file_count": len(startup),
+        "max_lines": max(line_counts, default=0),
+        "over_count": sum(1 for n in line_counts if n >= MAX_STARTUP_LINES),
+        "limit_lines": MAX_STARTUP_LINES,
     }
 
     facts["F3_target_found"] = len(local_files) > 0
     facts["F4_target_found"] = len(startup) > 0
+    facts["F3_target_count"] = len(local_files)
+    facts["F4_target_count"] = len(startup)
 
     skills = own_skill_dirs(workdir, claude_home)
     facts["F5"] = {"measured": True, "pass": len(skills) > 0, "count": len(skills)}
@@ -381,6 +406,7 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
     used_mcp_ever = False
     max_consecutive = 0
     any_two_agents_between_humans = False
+    d4_hit_sessions = 0
     skill_counts: dict[str, int] = {}
     agent_counts: dict[str, int] = {}
     connector_counts: dict[str, int] = {}
@@ -412,11 +438,15 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
             max_consecutive = stats.max_consecutive_tool_calls
         if stats.distinct_agent_names_between_humans_2plus:
             any_two_agents_between_humans = True
+            d4_hit_sessions += 1
 
     facts["F6"] = {
         "measured": facts["F5"]["pass"] and len(sessions) > 0,
         "pass": len(used_skills) > 0,
         "count": len(used_skills),
+        "own_count": len(skills),
+        "use_total": sum(skill_counts.values()),
+        "session_count": len(sessions),
     }
 
     if skill_counts:
@@ -428,41 +458,67 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
         )
         f7_candidates = [p.name for p in ranked_by_mtime[:5]]
     facts["F7_candidates"] = f7_candidates
+    facts["F7_target_count"] = len(f7_candidates)
 
     facts["F9"] = {
         "measured": facts["F8"]["pass"] and len(sessions) > 0,
         "pass": len(used_agents) > 0,
         "count": len(used_agents),
+        "own_count": len(agents),
+        "use_total": sum(agent_counts.values()),
+        "session_count": len(sessions),
     }
 
     facts["_skill_use_counts"] = skill_counts
     facts["_agent_use_counts"] = agent_counts
     facts["_connector_use_counts"] = connector_counts
 
-    mcp_cfg = mcp_config_present(workdir, claude_home)
-    facts["F10"] = {"measured": True, "pass": bool(mcp_cfg or used_mcp_ever)}
+    mcp_count = mcp_server_count(workdir, claude_home)
+    facts["F10"] = {
+        "measured": True,
+        "pass": bool(mcp_count > 0 or used_mcp_ever),
+        "config_count": mcp_count,
+        "used_in_records": used_mcp_ever,
+    }
     facts["F11"] = {
         "measured": len(sessions) > 0,
         "pass": used_mcp_recent,
+        "calls_30d": sum(connector_counts.values()),
+        "session_count": len(sessions),
     }
 
     facts["D4"] = {
         "measured": facts["F8"]["pass"] and len(sessions) > 0,
         "pass": any_two_agents_between_humans,
+        "hit_count": d4_hit_sessions,
+        "own_count": len(agents),
+        "session_count": len(sessions),
     }
     facts["D5"] = {
         "measured": len(sessions) > 0,
         "pass": max_consecutive >= CONSECUTIVE_THRESHOLD,
         "max_consecutive": max_consecutive,
+        "threshold": CONSECUTIVE_THRESHOLD,
+        "session_count": len(sessions),
     }
 
     perms = _merged_permissions(workdir, claude_home)
-    facts["S2"] = {"measured": True, "pass": deny_or_ask_blocks_secret_files(perms)}
-    facts["S3"] = {"measured": True, "pass": deny_or_ask_blocks_destructive_ops(perms)}
-    facts["S4"] = {"measured": True, "pass": not default_mode_is_bypass_all(perms)}
+    secret_rules = secret_file_rule_count(perms)
+    destructive_rules = destructive_rule_count(perms)
+    facts["S2"] = {"measured": True, "pass": secret_rules > 0, "rule_count": secret_rules}
+    facts["S3"] = {"measured": True, "pass": destructive_rules > 0, "rule_count": destructive_rules}
+    facts["S4"] = {
+        "measured": True,
+        "pass": not default_mode_is_bypass_all(perms),
+        "mode_set": isinstance(perms.get("default_mode"), str),
+    }
+    allow_count = len(perms.get("allow", []))
+    auto_mode = default_mode_is_auto_judging(perms)
     facts["D1"] = {
         "measured": True,
-        "pass": len(perms.get("allow", [])) > 0 or default_mode_is_auto_judging(perms),
+        "pass": allow_count > 0 or auto_mode,
+        "allow_count": allow_count,
+        "auto_mode": auto_mode,
     }
 
     stop_hook = has_stop_hook(perms)
@@ -471,6 +527,8 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
         "measured": True,
         "pass": stop_hook or len(readonly_agents) > 0,
         "needs_ai_fallback": not (stop_hook or len(readonly_agents) > 0),
+        "stop_hook_count": stop_hook_count(perms),
+        "readonly_agent_count": len(readonly_agents),
     }
 
     sched_dirs = scheduled_task_dirs(claude_home)
@@ -482,6 +540,7 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
         "pass": True if (sched_dirs and sched_recent) else None,
         "needs_user_fallback": len(sched_dirs) > 0 and not sched_recent,
         "definition_count": len(sched_dirs),
+        "recent": bool(sched_recent),
     }
 
     facts["_global_instruction_has_content"] = bool(
@@ -496,6 +555,8 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
     )
     facts["_has_stop_hook"] = stop_hook
     facts["_has_scheduled_defs"] = len(sched_dirs) > 0
+    facts["_stop_hook_count"] = stop_hook_count(perms)
+    facts["_scheduled_def_count"] = len(sched_dirs)
 
     return facts
 

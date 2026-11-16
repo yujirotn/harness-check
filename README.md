@@ -30,7 +30,9 @@ python3 render.py --out ./harness-check-output
 
 名前つきのレポートが欲しいときは `collect.py` に `--show-names` を付ける。
 
-**人に渡してよいのは `report.pdf` と `report.html` だけです。** `facts.json`・`result.json`・`ai_judgments.json`・`ai_targets.json` は手元用（フォルダ名などが入りうる）です。レポートができたら `ai_targets.json` は消してください。
+**人に見せてよいのは `report.pdf` と `report.html` です。** `result.json` はそのまま人に渡すものではありません。SHO-SAN に送る場合は、送るスキル（[sho-san-share](https://github.com/yujirotn/sho-san-share)）が同意を取ったうえで `result.json` だけを送ります。それ以外のファイル（`facts.json`・`ai_judgments.json`・`ai_targets.json`・レポート）は送られません。`facts.json`・`ai_judgments.json`・`ai_targets.json` は手元用（フォルダの場所などが入りうる）です。レポートができたら `ai_targets.json` は消してください。
+
+`result.json` には、項目ごとに「なぜそう判定したか」の短い理由（数と状態だけ。名前やファイルの場所は入らない）が付きます。形は `docs/RESULT_SCHEMA.md` を参照してください。
 
 詳しい手順は `AGENTS.md` を参照してください（AIが点検を行うときの正本です）。
 
@@ -57,6 +59,7 @@ harness-check/
 │   ├── claude_code.py     Claude Code 用の読み取り部品
 │   └── codex.py           Codex 用の読み取り部品
 ├── score.py               facts.json と ai_judgments.json から result.json を出す
+├── reasons.py             項目ごとの理由（決まった文の型）と、名前が入っていないかの検査
 ├── render.py              result.json とひな形から HTML と PDF を出す
 ├── templates/report.html  レポートのひな形（差し替え可能・result.json だけを読む）
 ├── tests/                 見本の設定フォルダを使った自動テスト

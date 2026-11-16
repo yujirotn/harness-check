@@ -24,7 +24,7 @@ from readers import claude_code  # noqa: E402
 from readers import codex  # noqa: E402
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 RECENT_DAYS = 30
 
 
@@ -142,7 +142,8 @@ def compute_s1(workdir: Path, claude_home: Path, codex_home: Path) -> dict:
 def compute_g1(workdir: Path, cc_facts: dict, codex_facts: dict) -> dict:
     git_root = common.find_git_root(workdir)
     if git_root is None:
-        return {"measured": True, "pass": False, "reason": "not_a_git_repo"}
+        return {"measured": True, "pass": False, "is_git_repo": False, "has_remote": False,
+                "instruction_tracked": False}
 
     has_remote = common.git_has_remote(git_root)
 
@@ -171,6 +172,7 @@ def compute_g1(workdir: Path, cc_facts: dict, codex_facts: dict) -> dict:
     return {
         "measured": True,
         "pass": has_remote and instruction_tracked,
+        "is_git_repo": True,
         "has_remote": has_remote,
         "instruction_tracked": instruction_tracked,
     }
@@ -189,7 +191,13 @@ def compute_g2(cc_facts: dict, codex_facts: dict) -> dict:
         cc_facts.get("_global_instruction_has_content") is not None
         or codex_facts.get("_global_instruction_has_content") is not None
     )
-    return {"measured": True if measured else False, "pass": passed}
+    return {
+        "measured": True if measured else False,
+        "pass": passed,
+        "global_has_content": bool(global_has_content),
+        "local_has_content": bool(local_has_content),
+        "has_override": bool(has_override),
+    }
 
 
 def compute_g3(cc_facts: dict, codex_facts: dict) -> dict:
@@ -203,6 +211,9 @@ def compute_g3(cc_facts: dict, codex_facts: dict) -> dict:
         "measured": candidate_found,
         "pass": None,  # AI が確認するまで確定しない
         "needs_ai_confirmation": candidate_found,
+        "stop_hook_count": int(cc_facts.get("_stop_hook_count", 0)) + int(codex_facts.get("_stop_hook_count", 0)),
+        "scheduled_count": int(cc_facts.get("_scheduled_def_count", 0))
+        + int(codex_facts.get("_scheduled_def_count", 0)),
     }
 
 
@@ -278,17 +289,17 @@ def build_items(
             # 注意: 名前（スキル名等）は facts.json には入れない（原則8）。
             # AIが読むべき実ファイルは ai_targets.json の側に別途書き出す。
             per_tool_targets = {}
-            if cc_detected:
-                per_tool_targets["claude_code"] = {
-                    "target_found": bool(cc_facts.get(f"{iid}_target_found"))
+            for tool, detected, tf in (
+                ("claude_code", cc_detected, cc_facts),
+                ("codex", codex_detected, codex_facts),
+            ):
+                if not detected:
+                    continue
+                per_tool_targets[tool] = {
+                    "target_found": bool(tf.get(f"{iid}_target_found"))
                     if iid != "F7"
-                    else bool(cc_facts.get("F7_candidates"))
-                }
-            if codex_detected:
-                per_tool_targets["codex"] = {
-                    "target_found": bool(codex_facts.get(f"{iid}_target_found"))
-                    if iid != "F7"
-                    else bool(codex_facts.get("F7_candidates"))
+                    else bool(tf.get("F7_candidates")),
+                    "target_count": int(tf.get(f"{iid}_target_count", 0)),
                 }
             entry["per_tool"] = per_tool_targets
             entry["needs_ai"] = any(v.get("target_found") for v in per_tool_targets.values())

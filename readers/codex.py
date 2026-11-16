@@ -127,7 +127,7 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
     facts: dict = {}
 
     local_files = local_instruction_files(workdir)
-    facts["F1"] = {"measured": True, "pass": len(local_files) > 0}
+    facts["F1"] = {"measured": True, "pass": len(local_files) > 0, "count": len(local_files)}
 
     startup = startup_files(workdir)
     total_bytes = sum((f.stat().st_size for f in startup if f.exists()), 0)
@@ -136,15 +136,19 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
         "pass": total_bytes < MAX_STARTUP_BYTES if startup else None,
         "total_bytes": total_bytes,
         "file_count": len(startup),
+        "limit_bytes": MAX_STARTUP_BYTES,
     }
 
     facts["F3_target_found"] = len(local_files) > 0
     facts["F4_target_found"] = len(startup) > 0
+    facts["F3_target_count"] = len(local_files)
+    facts["F4_target_count"] = len(startup)
 
     skills = own_skill_dirs(workdir, home)
     facts["F5"] = {"measured": True, "pass": len(skills) > 0, "count": len(skills)}
     ranked_by_mtime = sorted(skills, key=lambda p: _mtime_of(p), reverse=True)
     facts["F7_candidates"] = [p.name for p in ranked_by_mtime[:5]]
+    facts["F7_target_count"] = len(facts["F7_candidates"])
 
     agents = own_agent_files(workdir, codex_home)
     facts["F8"] = {"measured": True, "pass": len(agents) > 0, "count": len(agents)}
@@ -170,17 +174,21 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
     is_never_ask = (policy or "").strip().lower() == "never"
     is_always_ask = (policy or "").strip().lower() == "untrusted"
 
+    approval_flags = {"never_ask": is_never_ask, "full_access": is_full_access, "always_ask": is_always_ask}
     facts["S3"] = {
         "measured": has_approval_signal,
         "pass": (not is_never_ask) and (not is_full_access) if has_approval_signal else None,
+        **approval_flags,
     }
     facts["S4"] = {
         "measured": has_approval_signal,
         "pass": not (is_never_ask and is_full_access) if has_approval_signal else None,
+        **approval_flags,
     }
     facts["D1"] = {
         "measured": has_approval_signal,
         "pass": not is_always_ask if has_approval_signal else None,
+        **approval_flags,
     }
 
     stop_hook = hooks_json_has_stop(codex_home, workdir)
@@ -188,6 +196,8 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
         "measured": stop_hook is not None,
         "pass": bool(stop_hook) if stop_hook is not None else None,
         "needs_ai_fallback": stop_hook is not True,
+        "hook_file_found": stop_hook is not None,
+        "stop_hook_count": 1 if stop_hook else 0,
     }
 
     autos = automations_dirs(codex_home)
@@ -199,6 +209,7 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
         "pass": True if (autos and sched_recent) else None,
         "needs_user_fallback": len(autos) > 0 and not sched_recent,
         "definition_count": len(autos),
+        "recent": bool(sched_recent),
     }
 
     facts["_global_instruction_has_content"] = bool(
@@ -210,6 +221,8 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
     )
     facts["_has_stop_hook"] = bool(stop_hook)
     facts["_has_scheduled_defs"] = len(autos) > 0
+    facts["_stop_hook_count"] = 1 if stop_hook else 0
+    facts["_scheduled_def_count"] = len(autos)
 
     return facts
 

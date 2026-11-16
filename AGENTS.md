@@ -51,6 +51,7 @@ python3 collect.py --workdir . --out ./harness-check-output
 
 - キーは項目ID。値は道具名（`claude_code` / `codex`）または `combined`（G3 のみ）。
 - `evidence_lines` は判定の根拠になった行番号だけ（本文は書かない）。
+- **理由の文は書かないでください。** `result.json` の項目ごとの理由は、`score.py` が決まった文の型で作ります（あなたの答え「はい・いいえ」と行の数だけを使います）。`ai_judgments.json` に文を書いても使われません。
 - 対象が見つからない項目・道具は書かなくてよい（「測定できず」になります）。
 
 ### 4. 本人への確認が必要な項目に答える
@@ -79,7 +80,7 @@ python3 render.py --out ./harness-check-output
 
 点数、型の名前、次に直す項目（最大3つ）を短く本人に伝えてください。レポートの場所（`harness-check-output/report.pdf` または `report.html`）も伝えてください。
 
-**人に渡してよいのは `report.pdf` と `report.html` だけです。** `facts.json`・`result.json`・`ai_judgments.json`・`ai_targets.json` は手元用（フォルダ名などが入りうる）なので渡さないでください。レポートができたら `ai_targets.json` を消してください。
+**人に見せてよいのは `report.pdf` と `report.html` です。** `result.json` はそのまま人に渡すものではありません。SHO-SAN に送る場合は、送るスキル（sho-san-share）が同意を取ったうえで `result.json` だけを送ります。それ以外のファイルは送られません。`facts.json`・`ai_judgments.json`・`ai_targets.json` は手元用（フォルダの場所などが入りうる）なので渡さないでください。レポートができたら `ai_targets.json` を消してください。
 
 ## テスト（開発時）
 
