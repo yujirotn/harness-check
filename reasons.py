@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
+
+from namelike import scan_name_like
 from typing import Callable, Optional
 
 MAX_REASON_CHARS = 300
@@ -29,14 +31,8 @@ TOOL_ORDER = ("claude_code", "codex")
 # 文に出てよい英字の語（道具の呼び名だけ）。これ以外の英字の並びは、名前らしいものとして止める
 ALLOWED_ASCII_WORDS = {"Claude", "Code", "Codex", "Git", "AI"}
 
-_FILE_EXT = r"(?:md|json|jsonl|ya?ml|toml|ts|tsx|js|mjs|py|sh|txt|html|csv|sql|env)"
 _CHECKS = [
-    # 受付（jirei-box intake の names.ts）と同じ形の検査
-    ("file_path_like", re.compile(r"(?:~|[A-Za-z]:)?[\w.-]*(?:[/\\][\w.-]+)+", re.ASCII)),
-    ("file_path_like", re.compile(r"(?<![\w.-])[\w-]*\." + _FILE_EXT + r"(?!\w)", re.ASCII)),
-    ("name_like_identifier",
-     re.compile(r"(?<![A-Za-z0-9_-])(?=[a-z0-9_-]*[a-z])[a-z0-9]+(?:[-_]+[a-z0-9]+)+(?![A-Za-z0-9_-])")),
-    # それより広く止めるもの
+    # 受付と同じ検査（namelike）に加えて、それより広く止めるもの
     ("path_char", re.compile(r"[/\\~]")),
     ("url", re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*://|www\.)")),
     ("email", re.compile(r"@")),
@@ -50,7 +46,7 @@ _ASCII_WORD_RE = re.compile(r"[A-Za-z]+")
 def find_forbidden(text: str) -> list[str]:
     """禁止のもの（パス・拡張子つきの名前・URL・メール・英数字の識別子など）の種類を返す。無ければ空。"""
     t = unicodedata.normalize("NFKC", text)
-    found = []
+    found = sorted(scan_name_like(text))  # 受付と同じ検査（日本語のパス・拡張子つきの名前も止める）
     for kind, rx in _CHECKS:
         if rx.search(t) and kind not in found:
             found.append(kind)
@@ -272,12 +268,15 @@ def _f11(tool, v, r, ai):
     calls, sessions = _n(v, "calls_30d"), _n(v, "session_count")
     if not r["measured"]:
         return Part("会話の記録が見つからなかったため、" + CANNOT, [F("会話の記録", "0件")])
-    facts = [F("直近30日の呼び出し", f"{calls}回"), F("基準", "直近30日に1回以上")]
+    crit = F("基準", "直近30日に1回以上")
     if r["pass"] and calls > 0:
-        return Part(f"直近30日に、コネクタの呼び出しが{calls}回あり、1回以上{MEETS}", facts)
+        return Part(f"直近30日に、コネクタの呼び出しが{calls}回あり、1回以上{MEETS}", [F("直近30日の呼び出し", f"{calls}回"), crit])
     if r["pass"]:
-        return Part(f"直近30日に動いた会話の中に、コネクタの呼び出しがあり、1回以上{MEETS}", facts)
-    return Part(f"直近30日に、コネクタの呼び出しは0回で、1回以上{NOT_MEETS}", facts)
+        # 判定は「直近30日に動いた会話にコネクタの呼び出しがある」。回数（日付つきで数えたもの）は0のことがある。
+        # 文と数字が食い違わないよう、このときは回数を出さない
+        return Part(f"直近30日に動いた会話の中で、コネクタが使われた記録があり（回数は数えられませんでした）、1回以上{MEETS}",
+                    [F("直近30日に動いた会話での使用", "あり"), crit])
+    return Part(f"直近30日に、コネクタの呼び出しは0回で、1回以上{NOT_MEETS}", [F("直近30日の呼び出し", f"{calls}回"), crit])
 
 
 def _rule_count(what: str):
@@ -394,7 +393,11 @@ def _d3(tool, v, r, ai):
     if not v.get("needs_ai_fallback"):
         if tool == "codex":
             return Part(f"終了時に動くフックがあり、1件以上{MEETS}", machine + [F("基準", "1件以上")])
-        return Part(f"終了時に動くフックが{hooks}件、読むだけの確認役のエージェントが{agents}件あり、どちらか1件以上{MEETS}",
+        if hooks == 0 and agents == 0:
+            # 終了時のフックの設定の項目はあるが、中身が数えられなかった（判定は「設定がある」で通っている）
+            return Part(f"終了時に動くフックの設定があり、どちらか1件以上{MEETS}",
+                        [F("終了時に動くフックの設定", "あり"), F("基準", "どちらか1件以上")])
+        return Part(f"終了時に動くフックが{hooks}件、読むだけの確認役のエージェントが{agents}件で、どちらか1件以上{MEETS}",
                     machine + [F("基準", "どちらか1件以上")])
     state, n_lines = _ai_state(ai)
     facts = machine + _ai_facts(state, n_lines)
@@ -489,8 +492,13 @@ def _g3(c, status, ai):
         return Part("会話の終わりや区切りで動くフックも定時実行も見つからなかったため、" + CANNOT,
                     [F("終わりや区切りで動くフック", "0件"), F("定時実行", "0件")])
     state, n_lines = _ai_state(ai)
-    facts = [F("終わりや区切りで動くフック", f"{hooks}件"), F("定時実行", f"{sched}件")] + _ai_facts(state, n_lines)
-    base = f"終わりや区切りで動くフック{hooks}件と定時実行{sched}件の中身をAIが2回読み"
+    if hooks == 0 and sched == 0:
+        # フックの設定の項目はあるが中身が数えられなかった。「0件の中身を読んだ」と書かない
+        facts = [F("終わりや区切りで動く仕組みの設定", "あり")] + _ai_facts(state, n_lines)
+        base = "終わりや区切りで動く仕組みの設定の中身をAIが2回読み"
+    else:
+        facts = [F("終わりや区切りで動くフック", f"{hooks}件"), F("定時実行", f"{sched}件")] + _ai_facts(state, n_lines)
+        base = f"終わりや区切りで動くフック{hooks}件と定時実行{sched}件の中身をAIが2回読み"
     if state == "yes":
         return Part(f"{base}、2回とも、記録を残す仕組みだと判定しました", facts)
     if state == "no":
@@ -524,7 +532,9 @@ def _keep_criteria(facts: list, cap: int) -> list:
 def _join(parts: list[tuple[Optional[str], Part]]) -> tuple[str, list]:
     labeled = len(parts) > 1
     sentences, facts = [], []
-    per_tool_cap = MAX_FACTS // len(parts) if parts else MAX_FACTS
+    # 枠は、数字を持つ道具の数で割る（数字の無い道具の分まで割ると、余裕があるのに数字が落ちる）
+    with_facts = sum(1 for _, p in parts if p.facts)
+    per_tool_cap = MAX_FACTS // with_facts if with_facts else MAX_FACTS
     for tool, part in parts:
         # Codex だけの文は、Claude Code の項目と取り違えないよう道具の名前を前に付ける
         named = bool(tool) and (labeled or tool == "codex")

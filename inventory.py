@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
+
+from namelike import scan_name_like
+from propernoun import find_marks
 from typing import Iterable, Optional
 
 KINDS = ("skills", "agents", "connectors")
@@ -24,12 +27,7 @@ MAX_SUMMARY_CHARS = 80
 # 説明に出てよい英字の語（一般の呼び名だけ）。これ以外の英字の並びは、名前らしいものとして止める
 ALLOWED_ASCII_WORDS = {"AI", "PDF", "CSV", "HTML", "Web", "SNS", "PC", "3D"}
 
-_FILE_EXT = r"(?:md|json|jsonl|ya?ml|toml|ts|tsx|js|mjs|py|sh|txt|html|csv|sql|env)"
 _CHECKS = [
-    ("file_path_like", re.compile(r"(?:~|[A-Za-z]:)?[\w.-]*(?:[/\\][\w.-]+)+", re.ASCII)),
-    ("file_path_like", re.compile(r"(?<![\w.-])[\w-]*\." + _FILE_EXT + r"(?!\w)", re.ASCII)),
-    ("name_like_identifier",
-     re.compile(r"(?<![A-Za-z0-9_-])(?=[a-z0-9_-]*[a-z])[a-z0-9]+(?:[-_]+[a-z0-9]+)+(?![A-Za-z0-9_-])")),
     ("camel_case", re.compile(r"[a-z][A-Z]|[A-Z]{2,}[a-z]")),
     ("path_char", re.compile(r"[/\\~]")),
     ("url", re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*://|www\.)")),
@@ -88,11 +86,13 @@ def check_summary(text, needles: set[str]) -> list[str]:
     if any(unicodedata.category(c) in ("Cc", "Cf") for c in text):
         found.append("control")
     t = unicodedata.normalize("NFKC", text)
+    found += [k for k in sorted(scan_name_like(text)) if k not in found]
     for kind, rx in _CHECKS:
         if rx.search(t) and kind not in found:
             found.append(kind)
     if any(w not in ALLOWED_ASCII_WORDS for w in _ASCII_WORD_RE.findall(t)):
         found.append("ascii_word")
+    found += [k for k in find_marks(text) if k not in found]  # 社名・人名らしい印（誤って止めることが少ないものだけ）
     flat = normalize_for_compare(text)
     if any(n in flat for n in needles):
         found.append("name_match")
