@@ -32,7 +32,7 @@ python3 render.py --out ./harness-check-output
 
 **人に見せてよいのは `report.pdf` と `report.html` です。** `result.json` はそのまま人に渡すものではありません。SHO-SAN に送る場合は、送るスキル（[sho-san-share](https://github.com/yujirotn/sho-san-share)）が同意を取ったうえで `result.json` だけを送ります。それ以外のファイル（`facts.json`・`ai_judgments.json`・`ai_targets.json`・レポート）は送られません。`facts.json`・`ai_judgments.json`・`ai_targets.json` は手元用（フォルダの場所などが入りうる）です。レポートができたら `ai_targets.json` は消してください。
 
-`result.json` には、項目ごとに「なぜそう判定したか」の短い理由（数と状態だけ。名前やファイルの場所は入らない）が付きます。形は `docs/RESULT_SCHEMA.md` を参照してください。
+`result.json` には、項目ごとに「なぜそう判定したか」の短い理由（数と状態だけ。名前やファイルの場所は入らない）と、スキル・エージェント・コネクタが何をするものかを名前を使わずに1文ずつ書いた「説明の一覧」が付きます。説明はAIが書き、名前などが入っていたものは機械で取り除きます。送る前には、送るスキルが説明の一覧を全部見せます。形は `docs/RESULT_SCHEMA.md` を参照してください。
 
 詳しい手順は `AGENTS.md` を参照してください（AIが点検を行うときの正本です）。
 

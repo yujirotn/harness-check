@@ -221,6 +221,8 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
     )
     facts["_has_stop_hook"] = bool(stop_hook)
     facts["_has_scheduled_defs"] = len(autos) > 0
+    facts["_own_skill_names"] = [p.name for p in skills]
+    facts["_own_agent_names"] = [p.stem for p in agents]
     facts["_stop_hook_count"] = 1 if stop_hook else 0
     facts["_scheduled_def_count"] = len(autos)
 

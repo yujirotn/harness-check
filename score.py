@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import inventory as inventory_mod  # noqa: E402
 import reasons  # noqa: E402
 
 RESULT_SCHEMA_VERSION = 3
@@ -296,6 +297,23 @@ def main() -> int:
         "window_days": facts.get("window_days", 30),
     }
 
+    # 説明の一覧（5-9）。名前の一覧は手元用の ai_targets.json にだけある。読めなければ説明は全部置き換える
+    needles = None
+    targets_path = out_dir / "ai_targets.json"
+    if targets_path.exists():
+        with targets_path.open("r", encoding="utf-8") as fh:
+            inv_targets = (json.load(fh) or {}).get("INVENTORY") or {}
+        names = list(inv_targets.get("other_names") or [])
+        for kind in inventory_mod.KINDS:
+            names += [str(v.get("name", "")) for v in (inv_targets.get(kind) or {}).values() if isinstance(v, dict)]
+        needles = inventory_mod.name_needles(names)
+    inv, inv_truncated, inv_replaced = inventory_mod.build_inventory(
+        facts.get("inventory"), ai_judgments.get("INVENTORY"), needles
+    )
+    result["inventory"] = inv
+    result["reference"] = dict(result["reference"], inventory_truncated=inv_truncated,
+                               inventory_summaries_replaced=inv_replaced)
+
     result_path = out_dir / "result.json"
     with result_path.open("w", encoding="utf-8") as fh:
         json.dump(result, fh, ensure_ascii=False, indent=2, sort_keys=True)
@@ -306,6 +324,10 @@ def main() -> int:
     print(f"型: {type_name}")
     if replaced:
         print(f"注意: 理由の文 {replaced} 件が検査に通らず、定型文に置き換えました（文の型の不具合です）。")
+    total_inv = sum(len(v) for v in inv.values())
+    n_rep = sum(inv_replaced.values())
+    if total_inv:
+        print(f"説明の一覧: {total_inv}件（うち {n_rep} 件は「{inventory_mod.FALLBACK_SUMMARY}」に置き換え）")
     return 0
 
 

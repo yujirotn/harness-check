@@ -78,6 +78,9 @@
       // 「意味のない識別子」（UUID・長い16進など）は、ひな形側で表示から除外し「ほか◯件」にまとめる
     },
 
+    "inventory_truncated": { "skills": 0, "agents": 0, "connectors": 0 },          // v3。inventory で300件を超えて切った数
+    "inventory_summaries_replaced": { "skills": 2, "agents": 0, "connectors": 1 }, // v3。説明を「（説明を作れませんでした）」に置き換えた数
+
     "max_consecutive_tool_calls": { "claude_code": 26 },
     "startup_instructions": {
       "claude_code_total_lines": 42,
@@ -92,7 +95,14 @@
   },
 
   "tools_detected": { "claude_code": true, "codex": false },
-  "window_days": 30
+  "window_days": 30,
+
+  // v3。スキル・エージェント・コネクタの「説明の一覧」（名前は入らない）
+  "inventory": {
+    "skills":     [{ "summary": "月ごとの実績を表にまとめ、グラフと要点を付ける", "category": "集計", "used_30d": 4 }],
+    "agents":     [{ "summary": "書いた文章を、読み手の立場で見直して指摘する", "used_30d": 0 }],
+    "connectors": [{ "summary": "チャットの道具とつないで、メッセージを読み書きする", "used_30d": 12 }]
+  }
 }
 ```
 
@@ -143,13 +153,37 @@
 
 項目ごと・状態ごとの文の型の一覧は `reasons.py`（`ITEM_BUILDERS`・`COMBINED_BUILDERS`）。全23項目×3状態の例は `tests/test_reasons.py` の `SCENARIOS` で組み立てて確かめている。
 
+## inventory（v3 で追加・説明の一覧）
+
+スキル・エージェント・コネクタが「何をするものか」を、**名前を使わずに1文ずつ**並べたもの。名前なし・名前つきのどちらの結果にも必ずある（3つの配列とも必ずある。空の配列もありうる）。
+
+| キー | 型 | 決まり |
+|---|---|---|
+| `inventory.skills[]` | オブジェクト | キーは `summary`・`category`・`used_30d` の3つだけ |
+| `inventory.agents[]`・`inventory.connectors[]` | オブジェクト | キーは `summary`・`used_30d` の2つだけ |
+| `summary` | 文字列 | 1〜80字・改行なし。何をするものかの1文。作れなかったときは「（説明を作れませんでした）」（全角の括弧） |
+| `category` | 文字列 | 「集計」「資料」「メール」「相談」「調べもの」「自動化」「その他」のどれか |
+| `used_30d` | 整数か null | 直近30日に使われた回数（0以上）。数えられないとき（Codex のもの、会話の記録が無いとき）は null |
+| 各配列の長さ | — | 300件まで。超えた数は `reference.inventory_truncated` |
+
+- 並びは `used_30d` の多い順（null は最後）、同じ回数なら `summary` の文字順。名前の順・頭文字・文字数など、名前を逆算できる情報は入れない。
+- 数えている範囲: Claude Code のスキル・エージェント・コネクタ（設定にあるものと、会話の記録に出たもの）、Codex のスキル・エージェント。Codex のコネクタは名前を集めていないので入らない。同じ名前のものが両方の道具にあれば1つにまとめる。
+- **説明はお客様の PC の AI が書く**（`AGENTS.md` の手順3）。`score.py` が機械で検査し、1つでも当たれば捨てて「（説明を作れませんでした）」に置き換える。置き換えた数は `reference.inventory_summaries_replaced`。AIが書かなかった・`ai_targets.json` が無いときも同じ文になり、点検そのものは止まらない。
+- 検査の中身（`inventory.py` の `check_summary`）:
+  - そのもの自身の名前、ほかのスキル・エージェント・コネクタの名前、作業フォルダの場所の各段・定時実行の名前と、それらを `-` `_` `.` `/` 空白などで割った部分が、文字として含まれていないか。大文字小文字・全角半角・ハイフンと空白の違いはならして比べる。日本語2文字以下・英数字2文字以下の短い名前と、下の一般語は、普通の言葉と区別できないので比べない
+  - 英字は「AI」「PDF」「CSV」「HTML」「Web」「SNS」「PC」「3D」だけを許す。ほかの英字の並びは止める（製品名・英字の名前・識別子を止めるため）
+  - パス・拡張子つきの名前・URL・メール・英数字の識別子らしい語（`kebab-case`・`snake_case`・`CamelCase`）・記号 `/` `\` `~` `@` `:` `<` `>` など・7桁以上の数字の並び・80字超え・改行・制御文字
+- 機械で見つけきれないもの（語順を変えた日本語の社名・人名など）は、送るスキル（sho-san-share）の下見で説明の一覧を本人に全部見せ、目を通してもらってから送る。
+
 ## v2 との違い
 
 | | v2 | v3 |
 |---|---|---|
 | `schema_version` | 2 | 3 |
 | `items.<ID>` のキー | `name`・`pillar`・`judge`・`judge_label`・`status` | 左の5つ＋`reason`・`facts` |
-| ほかのキー（一番上・`pillars`・`next_fixes`・`reference`） | — | 変わらない |
+| 一番上 | — | `inventory` が増える |
+| `reference` | — | `inventory_truncated`・`inventory_summaries_replaced` が増える（名前なし・名前つきとも）。名前つき（`names_included: true`）のときだけ `named` があるのは v2 と同じ |
+| `pillars`・`next_fixes` | — | 変わらない |
 
 - 読む側は `schema_version` で分ける。v2 には `reason`・`facts` が無い。`render.py` は v2 の `result.json` もそのまま読める（理由の行を出さないだけ）。
 - `score.py` は v3 の `facts.json`（`collect.py` が出すもの）しか受け付けない。古い `facts.json` を渡すと止まるので、`collect.py` からやり直す。

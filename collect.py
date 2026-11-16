@@ -353,6 +353,66 @@ def build_reference(cc_facts: dict, codex_facts: dict, s1: dict, show_names: boo
     return reference
 
 
+def build_inventory_skeleton(
+    workdir: Path, claude_home: Path, codex_home: Path, home: Path,
+    cc_detected: bool, codex_detected: bool, cc_facts: dict, codex_facts: dict,
+) -> tuple[dict, dict]:
+    """説明の一覧の下ごしらえ（5-9）。
+
+    戻り値の1つ目は facts.json に入れる形（id と回数だけ・名前なし）。
+    2つ目は ai_targets.json に入れる形（id → 名前と読むファイル。手元用）。
+    数えられる範囲は、ほかの項目で集めているものと同じ（Claude Code のスキル・エージェント・コネクタ、
+    Codex のスキル・エージェント）。Codex のコネクタの名前は集めていないので入らない。
+    """
+    cc_known = int(cc_facts.get("_session_count", 0)) > 0
+    entries: dict = {"skills": {}, "agents": {}, "connectors": {}}
+
+    def add(kind: str, name: str, used, files: list) -> None:
+        cur = entries[kind].get(name)
+        if cur is None:
+            entries[kind][name] = {"used_30d": used, "files": [str(f) for f in files]}
+            return
+        if cur["used_30d"] is None and used is not None:
+            cur["used_30d"] = used
+        cur["files"].extend(str(f) for f in files if str(f) not in cur["files"])
+
+    if cc_detected:
+        counts = cc_facts.get("_skill_use_counts", {})
+        for d in claude_code.own_skill_dirs(workdir, claude_home):
+            add("skills", d.name, int(counts.get(d.name, 0)) if cc_known else None, [d / "SKILL.md"])
+        counts = cc_facts.get("_agent_use_counts", {})
+        for f in claude_code.own_agent_files(workdir, claude_home):
+            add("agents", f.stem, int(counts.get(f.stem, 0)) if cc_known else None, [f])
+        counts = cc_facts.get("_connector_use_counts", {})
+        cfg = claude_code.config_files_for_secret_scan(workdir, claude_home)
+        mcp_files = [p for p in cfg if p.name == ".mcp.json"]
+        for name in sorted(set(cc_facts.get("_mcp_server_names", [])) | set(counts)):
+            add("connectors", name, int(counts.get(name, 0)) if cc_known else None,
+                mcp_files if name in cc_facts.get("_mcp_server_names", []) else [])
+    if codex_detected:
+        for d in codex.own_skill_dirs(workdir, home):
+            add("skills", d.name, None, [d / "SKILL.md"])
+        for f in codex.own_agent_files(workdir, codex_home):
+            add("agents", f.stem, None, [f])
+
+    prefix = {"skills": "K", "agents": "A", "connectors": "C"}
+    skeleton: dict = {}
+    targets: dict = {}
+    for kind, by_name in entries.items():
+        skeleton[kind] = []
+        targets[kind] = {}
+        for i, name in enumerate(sorted(by_name), start=1):
+            iid = f"{prefix[kind]}{i}"
+            skeleton[kind].append({"id": iid, "used_30d": by_name[name]["used_30d"]})
+            targets[kind][iid] = {"name": name, "files": by_name[name]["files"]}
+    # 説明に入っていないかを突き合わせる、ほかの名前（作業フォルダの場所の各段・定時実行の名前）
+    extra = list(workdir.parts)
+    extra += [p.name for p in claude_code.scheduled_task_dirs(claude_home)] if cc_detected else []
+    extra += [p.name for p in codex.automations_dirs(codex_home)] if codex_detected else []
+    targets["other_names"] = sorted(set(extra))
+    return skeleton, targets
+
+
 def _safe_get(d: dict, key: str, subkey: str, default=0):
     v = d.get(key)
     if isinstance(v, dict):
@@ -490,6 +550,9 @@ def main() -> int:
         workdir, cc_detected, codex_detected, cc_facts, codex_facts, items_def, s1, g1, g2, g3
     )
     reference = build_reference(cc_facts, codex_facts, s1, show_names=args.show_names)
+    inv_skeleton, inv_targets = build_inventory_skeleton(
+        workdir, claude_home, codex_home, home, cc_detected, codex_detected, cc_facts, codex_facts
+    )
 
     facts = {
         "schema_version": SCHEMA_VERSION,
@@ -499,11 +562,14 @@ def main() -> int:
         "pillar_order": items_def["pillar_order"],
         "items": items_out,
         "reference": reference,
+        # 説明の一覧の下ごしらえ（id と回数だけ。名前は ai_targets.json の側にだけ置く）
+        "inventory": inv_skeleton,
     }
 
     ai_targets = build_ai_targets(
         workdir, claude_home, codex_home, home, cc_detected, codex_detected, items_out, cc_facts, codex_facts
     )
+    ai_targets["INVENTORY"] = inv_targets
     ai_targets_path = out_dir / "ai_targets.json"
     with ai_targets_path.open("w", encoding="utf-8") as fh:
         json.dump(ai_targets, fh, ensure_ascii=False, indent=2, sort_keys=True)
@@ -520,6 +586,9 @@ def main() -> int:
     needs_user = [iid for iid, v in items_out.items() if v.get("needs_user")]
     if needs_ai:
         print(f"AIの判断が必要な項目: {', '.join(sorted(needs_ai))}")
+    inv_total = sum(len(v) for v in inv_skeleton.values())
+    if inv_total:
+        print(f"説明を書く対象（スキル・エージェント・コネクタ）: {inv_total}件（ai_targets.json の INVENTORY）")
     if needs_user:
         print(f"本人への確認が必要な項目: {', '.join(sorted(needs_user))}")
     return 0

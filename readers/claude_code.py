@@ -157,7 +157,12 @@ def mcp_config_present(workdir: Path, claude_home: Path) -> bool:
 
 
 def mcp_server_count(workdir: Path, claude_home: Path) -> int:
-    """設定に書かれた外部接続（MCPサーバー）の数。名前は数えるためだけに使い、外に出さない。"""
+    """設定に書かれた外部接続（MCPサーバー）の数。"""
+    return len(mcp_server_names(workdir, claude_home))
+
+
+def mcp_server_names(workdir: Path, claude_home: Path) -> list[str]:
+    """設定に書かれた外部接続（MCPサーバー）の名前。--show-names のときだけ外に出す。"""
     names: set[str] = set()
     candidates = [claude_home / ".mcp.json"]
     for d in common.walk_up_to_git_root(workdir):
@@ -175,7 +180,7 @@ def mcp_server_count(workdir: Path, claude_home: Path) -> int:
         servers = data.get("mcpServers") if isinstance(data, dict) else None
         if isinstance(servers, dict):
             names |= {str(k) for k in servers}
-    return len(names)
+    return sorted(names)
 
 
 def _load_settings_json(path: Path) -> Optional[dict]:
@@ -553,6 +558,10 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
     facts["_has_local_override"] = bool(
         global_instruction_local_override(claude_home) or local_instruction_local_override(workdir)
     )
+    # 名前の一覧（--show-names のときだけ collect.py が使う。facts.json の既定の出力には入れない）
+    facts["_own_skill_names"] = [p.name for p in skills]
+    facts["_own_agent_names"] = [p.stem for p in agents]
+    facts["_mcp_server_names"] = mcp_server_names(workdir, claude_home)
     facts["_has_stop_hook"] = stop_hook
     facts["_has_scheduled_defs"] = len(sched_dirs) > 0
     facts["_stop_hook_count"] = stop_hook_count(perms)

@@ -146,6 +146,9 @@ def run_pipeline(env: dict, out_dir: Path, ai: dict, show_names: bool = False) -
     if show_names:
         cmd.append("--show-names")
     subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
+    if callable(ai):
+        targets = json.loads((out_dir / "ai_targets.json").read_text(encoding="utf-8"))
+        ai = ai(targets)
     (out_dir / "ai_judgments.json").write_text(json.dumps(ai, ensure_ascii=False), encoding="utf-8")
     subprocess.run([sys.executable, str(REPO_ROOT / "score.py"), "--out", str(out_dir)],
                    check=True, capture_output=True, text=True, timeout=60)
@@ -244,7 +247,112 @@ class NastyEnvironmentTest(unittest.TestCase):
     def test_reference_shape_unchanged(self):
         ref = self.results["yes"]["reference"]
         self.assertEqual(set(ref), {"names_included", "skills", "agents", "connectors",
-                                    "max_consecutive_tool_calls", "startup_instructions", "secret_scan"})
+                                    "max_consecutive_tool_calls", "startup_instructions", "secret_scan",
+                                    "inventory_truncated", "inventory_summaries_replaced"})
+
+
+GOOD_SUMMARY = {"skills": "月ごとの実績を表にまとめ、要点を付ける", "agents": "書いた文章を読み手の立場で見直す",
+                "connectors": "取引先の情報を管理する道具とつないで読み書きする"}
+
+
+def ai_with_summaries(mode: str):
+    """mode: good（名前なしの説明）/ named（その項目の名前を入れた説明）/ other（ほかの項目やフォルダの名前）"""
+
+    def build(targets):
+        inv = targets["INVENTORY"]
+        all_names = [v["name"] for k in ("skills", "agents", "connectors") for v in inv[k].values()]
+        out = {}
+        for kind in ("skills", "agents", "connectors"):
+            out[kind] = {}
+            for i, (iid, v) in enumerate(sorted(inv[kind].items())):
+                if mode == "good":
+                    text = GOOD_SUMMARY[kind]
+                elif mode == "named":
+                    text = f"{v['name']}を動かす"
+                else:
+                    text = f"{all_names[(i + 1) % len(all_names)]}と一緒に使う" if i % 2 else "顧客フォルダの中身を見る"
+                out[kind][iid] = {"summary": text, "category": "集計"}
+        base = ai_answers(True, True)
+        base["INVENTORY"] = out
+        return base
+
+    return build
+
+
+class InventoryPipelineTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._td = tempfile.TemporaryDirectory()
+        root = Path(cls._td.name)
+        cls.env = build_nasty_env(root / "env")
+        cls.good = run_pipeline(cls.env, root / "good", ai_with_summaries("good"))
+        cls.named = run_pipeline(cls.env, root / "named", ai_with_summaries("named"))
+        cls.other = run_pipeline(cls.env, root / "other", ai_with_summaries("other"))
+        cls.none = run_pipeline(cls.env, root / "none", {})
+        cls.show_names = run_pipeline(cls.env, root / "show", ai_with_summaries("named"), show_names=True)
+        cls.root = root
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._td.cleanup()
+
+    def _all(self):
+        return {"good": self.good, "named": self.named, "other": self.other, "none": self.none,
+                "show_names": self.show_names}
+
+    def test_shape(self):
+        for key, res in self._all().items():
+            with self.subTest(run=key):
+                inv = res["inventory"]
+                self.assertEqual(set(inv), {"skills", "agents", "connectors"})
+                self.assertGreater(len(inv["skills"]), 0)
+                self.assertGreater(len(inv["connectors"]), 0)
+                for kind, rows in inv.items():
+                    for r in rows:
+                        want = {"summary", "category", "used_30d"} if kind == "skills" else {"summary", "used_30d"}
+                        self.assertEqual(set(r), want)
+                        self.assertTrue(1 <= len(r["summary"]) <= 80)
+                        self.assertTrue(r["used_30d"] is None or r["used_30d"] >= 0)
+
+    def test_good_summaries_pass(self):
+        inv = self.good["inventory"]
+        self.assertTrue(all(r["summary"] == GOOD_SUMMARY["skills"] for r in inv["skills"]))
+        self.assertTrue(all(r["category"] == "集計" for r in inv["skills"]))
+        self.assertEqual(self.good["reference"]["inventory_summaries_replaced"], {"skills": 0, "agents": 0, "connectors": 0})
+
+    def test_named_summaries_are_all_replaced(self):
+        for res in (self.named, self.other, self.show_names):
+            for kind, rows in res["inventory"].items():
+                for r in rows:
+                    self.assertEqual(r["summary"], "（説明を作れませんでした）", (kind, r))
+            n = {k: len(v) for k, v in res["inventory"].items()}
+            self.assertEqual(res["reference"]["inventory_summaries_replaced"], n)
+
+    def test_without_ai_everything_is_fallback_and_scoring_still_works(self):
+        self.assertTrue(all(r["summary"] == "（説明を作れませんでした）"
+                            for rows in self.none["inventory"].values() for r in rows))
+        self.assertIsNotNone(self.none["score"])
+
+    def test_no_names_anywhere_in_unnamed_results(self):
+        for key in ("good", "named", "other", "none"):
+            text = json.dumps(self._all()[key], ensure_ascii=False).lower()
+            for needle in NEEDLES:
+                self.assertNotIn(needle.lower(), text, (key, needle))
+
+    def test_without_ai_targets_all_summaries_replaced(self):
+        out = self.root / "good"
+        (out / "ai_targets.json").unlink()
+        subprocess.run([sys.executable, str(REPO_ROOT / "score.py"), "--out", str(out)],
+                       check=True, capture_output=True, text=True)
+        res = json.loads((out / "result.json").read_text(encoding="utf-8"))
+        self.assertTrue(all(r["summary"] == "（説明を作れませんでした）"
+                            for rows in res["inventory"].values() for r in rows))
+
+    def test_facts_json_inventory_has_ids_only(self):
+        facts = json.loads((self.root / "good" / "facts.json").read_text(encoding="utf-8"))
+        for rows in facts["inventory"].values():
+            for r in rows:
+                self.assertEqual(set(r), {"id", "used_30d"})
 
 
 class OldFactsRejectedTest(unittest.TestCase):
