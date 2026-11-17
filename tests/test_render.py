@@ -208,18 +208,49 @@ class WordingUpdateTest(unittest.TestCase):
         )
 
 
-class CoverOverlapTest(unittest.TestCase):
-    """HIGH #1（3回目差し戻し）: 表紙の説明2行は帯の中に収め、帯の外の要素と重ねない。"""
+class CoverLayoutTest(unittest.TestCase):
+    """v2.5（16-3・16-4）: 色の帯は無くした。説明の2行は見出しの直後、ダッシュボードと点数より前に置く。"""
 
-    def test_intro_is_inside_hero_band_not_a_sibling_before_it(self):
-        result = minimal_result()
+    def _html(self, result):
         template = (REPO_ROOT / "templates" / "report.html").read_text(encoding="utf-8")
-        html_out = render.build_html(template, result)
-        hero_start = html_out.index('<div class="hero">')
+        return render.build_html(template, result)
+
+    def test_intro_comes_right_after_header_and_before_score(self):
+        html_out = self._html(minimal_result())
+        head_end = html_out.index("</header>")
         intro_pos = html_out.index('class="intro"')
-        hero_main_pos = html_out.index('class="hero-main"')
-        # intro は hero の開始より後ろ、hero-main（点数など）より前にある＝hero の中の最初の子
-        self.assertTrue(hero_start < intro_pos < hero_main_pos)
+        score_pos = html_out.index('class="scorebox')
+        self.assertTrue(head_end < intro_pos < score_pos)
+
+    def test_withheld_score_shows_message_not_number(self):
+        result = minimal_result()
+        result["score"] = None
+        result["type_name"] = None
+        result["score_withheld"] = True
+        html_out = self._html(result)
+        self.assertIn("まだ測れるものが少ないため", html_out)
+        self.assertNotIn("None", html_out)
+
+    def test_insufficient_pillar_is_labelled(self):
+        result = minimal_result()
+        pid = result["pillar_order"][0]
+        result["pillars"][pid]["sufficient"] = False
+        self.assertIn("判定不足", self._html(result))
+
+    def test_daily_chart_has_one_bar_per_day(self):
+        result = minimal_result()
+        result["daily_30d"] = [{"date": f"11-{i:02d}", "active_seconds": i * 60, "sessions": 1} for i in range(1, 31)]
+        result["usage_breadth"] = {k: {"own": 4, "used": 1} for k in ("skills", "agents", "connectors")}
+        result["autonomy"] = {"tool_calls_30d": 1234, "max_consecutive": 35, "sessions_20plus": 2,
+                              "agent_relay_sessions": 1}
+        html_out = self._html(result)
+        self.assertEqual(html_out.count('class="bar"') + html_out.count('class="bar zero"'), 30)
+        self.assertIn("使用 <b class=\"num\">1</b> / 4本", html_out)
+        self.assertIn("1,234", html_out)
+
+    def test_v4_result_without_dashboard_keys_still_renders(self):
+        html_out = self._html(minimal_result())
+        self.assertNotIn('class="chart"', html_out)
 
 
 class MeaninglessIdentifierUnitTest(unittest.TestCase):

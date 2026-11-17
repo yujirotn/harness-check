@@ -1,4 +1,4 @@
-# result.json の形（schema_version 4）
+# result.json の形（schema_version 5）
 
 このファイルが `result.json` の形の正本です。受け取る側（ひな形・受付・管理画面）は、このファイルだけを見て実装できるように書いています。
 
@@ -10,20 +10,22 @@
 
 ```jsonc
 {
-  "schema_version": 4,       // 3 から items の各項目に reason・facts が付いた。4 から usage_this_month・tool_counts・items.<ID>.usage_tier が付いた
-  "score": 72,                // 100点満点。四捨五入済み。判定できた項目が0件なら null
-  "judged_item_count": 18,    // 判定できた項目の数（23項目中）
-  "total_item_count": 23,
-  "type_name": "土台は強く、安全が薄い型",  // 柱の呼び名は「土台」「安全」「育つ仕組み」「任せ方」の4つだけ。複数は「、」でつなぐ
+  "schema_version": 5,       // 3 から items の各項目に reason・facts が付いた。4 から usage_this_month・tool_counts・items.<ID>.usage_tier が付いた。5 は SPEC 16章
+  "score": 72,                // 100点満点。四捨五入済み。判定できた項目が半分未満（20項目中10未満）なら null（v5）
+  "score_withheld": false,    // v5。score を出さなかったとき true
+  "judged_item_count": 18,    // 判定できた項目の数（20項目中）
+  "total_item_count": 20,     // v5 で 23 → 20（F5・F8・F10 を廃止）
+  "type_name": "土台は強く、安全が薄い型",  // 柱の呼び名は「土台」「安全」「育つ仕組み」「任せ方」の4つだけ。複数は「、」でつなぐ。score が null なら null（v5）
   "pillar_order": ["foundation", "safety", "grow", "delegate"],
 
   "pillars": {
     "foundation": {
       "name": "土台",
       "judged_count": 10,      // この柱で判定できた項目数
-      "total_count": 11,       // この柱の項目数（23項目中の内訳。F1〜F11なら11）
-      "passed_count": 9,       // ○だった数
-      "rate": 0.9              // passed_count / judged_count。judged_count が0なら null
+      "total_count": 8,        // この柱の項目数（v5。土台は F1〜F4・F6・F7・F9・F11 の8）
+      "passed_count": 7,       // ○だった数
+      "rate": 0.9,             // 部分点の合計 / judged_count。judged_count が0なら null
+      "sufficient": true       // v5。judged_count×2 ≥ total_count。false の柱は点数・型の名前に使わない
     },
     "safety": { "...": "同じ形" },
     "grow": { "...": "同じ形（name は必ず「育つ仕組み」）" },
@@ -52,7 +54,7 @@
         "label": "満点"               // "0" | "1/3" | "2/3" | "満点"
       }
     }
-    // ... 23項目分。ひな形側は ID の番号順（F1, F2, ..., F10, F11）に並べ替えて表示する
+    // ... 20項目分（v5。F5・F8・F10 は無い）。ひな形側は ID の番号順（F1, F2, ..., F9, F11）に並べ替えて表示する
   },
 
   "next_fixes": [
@@ -216,7 +218,33 @@
   - 社名・人名らしい印（`propernoun.py`）: 株式会社・有限会社・合同会社・(株)・(有)・御中、固有の語の後ろの工務店・ホーム・ハウス・建設・不動産・事務所・商事・商店（「ホームページ」「ハウスメーカー」「建設業」「地域の工務店」「設計事務所」のような一般の言い方は通す）、漢字・カタカナの名前の後ろのさん・様・氏・くん・ちゃん・部長・課長・社長・店長（「お客様」「担当者様」「皆様」「社長向け」「営業部長」は通す）
 - **説明の中の社名や人名は、機械では見つけきれません。** 印の付かない固有名詞（「田中の週報」、カタカナだけの社名・商品名、地名や案件名）は通ってしまうので、送るスキル（sho-san-share）の下見で説明の一覧を本人に全部見せ、目を通してもらってから送ります。
 
-## v2・v3・v4 の違い
+## 表紙のダッシュボード（v5 で追加）
+
+```jsonc
+{
+  "daily_30d": [                         // 直近30日、古い日から順に30個。会話の記録が無ければ null
+    { "date": "10-20", "active_seconds": 0, "sessions": 0 }   // 日本時間の日付（MM-DD）・使っていた時間（秒）・その日に始まった会話の数
+  ],
+  "usage_breadth": {                     // 会話の記録が無ければ null
+    "skills": { "own": 3, "used": 2 },   // 自分で用意した数・直近30日に1回以上使われた数
+    "agents": { "own": 0, "used": 0 },
+    "connectors": { "own": 8, "used": 8 }  // 設定にあるものと、記録で呼ばれたものを合わせる
+  },
+  "autonomy": {                          // 会話の記録が無ければ null
+    "tool_calls_30d": 827,               // 直近30日の道具の呼び出しの合計
+    "max_consecutive": 74,               // 人の発言を挟まずに続いた最長
+    "sessions_20plus": 3,                // 20回以上続いた会話の数
+    "agent_relay_sessions": 0            // 自分で定義したエージェントが2種類以上、人を挟まず続けて動いた会話の数
+  }
+}
+```
+
+- どれも Claude Code の会話の記録から作る（Codex は積み残し）。名前は入れない。
+
+## v2・v3・v4・v5 の違い
+
+v5（SPEC 16章）: `items` から F5・F8・F10 が消えた（20項目）。一番上に `score_withheld`・`daily_30d`・`usage_breadth`・`autonomy` が増え、`pillars.<p>` に `sufficient` が増えた。`score`・`type_name` は判定できた項目が半分未満なら null。S2・S3 の `facts` は系統ごとの「止めている／止めていない」になった。送り先（sho-san-share・事例ボックス）が v5 を受け付けるには、送り先側の対応が要る（v4 のときと同じ）。
+
 
 | | v2 | v3 | v4 |
 |---|---|---|---|
@@ -228,7 +256,7 @@
 
 - 読む側は `schema_version` で分ける。v2 には `reason`・`facts` が無く、v2・v3 には `usage_tier`・`usage_this_month`・`tool_counts` が無い。**この挙動は本リポジトリの `render.py` に限った話**（どの版の `result.json` を渡されても、その版に無いキーの枠を出さないだけで動く）。
 - **送り先（送るスキル sho-san-share・事例ボックス）は、現状 `schema_version` を見て版を判定しており、知らない版（v4）は拒否する。** 「未知のキーは無視すれば動く」は保証されていない。v4 を受け付けるには送り先側の対応が別途必要（送り先の修正は別作業として扱う。このリポジトリ側の対応は、この事実を正しく書くところまで）。
-- `score.py` は v4 の `facts.json`（`collect.py` が出すもの）しか受け付けない。古い `facts.json` を渡すと止まるので、`collect.py` からやり直す。
+- `score.py` は v5 の `facts.json`（`collect.py` が出すもの）しか受け付けない。古い `facts.json` を渡すと止まるので、`collect.py` からやり直す。
 - v4で`pillars.<p>.rate`の**計算の仕方**が変わった点に注意: v3までは「○の数÷判定できた数」。v4は、段階評価のある項目（F6・F9・F11）がある柱では「部分点の合計÷判定できた数」。段階評価の無い柱（安全・育つ仕組み・任せ方）は、○＝1／×＝0のままなので計算結果は変わらない。
 
 ## 守っていること

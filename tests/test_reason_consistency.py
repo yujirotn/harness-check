@@ -30,9 +30,6 @@ def gen(iid, tool):
     if iid in ("F1",):
         for n in N:
             yield {"count": n}, n > 0
-    elif iid in ("F5", "F8"):
-        for n in N:
-            yield {"count": n}, n > 0
     elif iid in ("F6", "F9"):
         if tool == "codex":
             return
@@ -48,13 +45,6 @@ def gen(iid, tool):
             for mx in (1, 199, 200, 412):
                 over = 1 if mx >= 200 else 0
                 yield {"file_count": 2, "max_lines": mx, "over_count": over, "limit_lines": 200}, mx < 200
-    elif iid == "F10":
-        if tool == "codex":
-            for b in B:
-                yield {}, b
-        else:
-            for n, used in itertools.product(N, B):
-                yield {"config_count": n, "used_in_records": used}, n > 0 or used
     elif iid == "F11":
         if tool == "codex":
             return
@@ -62,8 +52,11 @@ def gen(iid, tool):
             # 判定は「直近30日に動いた会話に呼び出しがある」。回数は日付つきの呼び出しだけを数える
             yield {"calls_30d": calls, "session_count": 3}, recent_session_used or calls > 0
     elif iid in ("S2", "S3") and tool == "claude_code":
-        for n in N:
-            yield {"rule_count": n}, n > 0
+        cats = ("env", "keys") if iid == "S2" else ("delete", "force", "outward")
+        for flags in itertools.product(B, repeat=len(cats)):
+            for n, hooks in itertools.product(N, N):
+                cov = dict(zip(cats, flags))
+                yield {"rule_count": n, "hook_count": hooks, "covered": cov}, all(flags)
     elif iid == "D1" and tool == "claude_code":
         for n, auto in itertools.product(N, B):
             yield {"allow_count": n, "auto_mode": auto}, n > 0 or auto
@@ -90,7 +83,6 @@ RULES = {
     "直近30日に使われた数": lambda x: x >= 1,
     "直近30日の回数の合計": lambda x: x >= 1,
     "直近30日の呼び出し": lambda x: x >= 1,
-    "該当する設定": lambda x: x >= 1,
     "該当する会話": lambda x: x >= 1,
     "いちばん長く続いた回数": lambda x: x >= 20,
     "いちばん長い指示ファイル": lambda x: x < 200,
@@ -98,12 +90,11 @@ RULES = {
     "合計の大きさ": lambda x: x < 32768,
 }
 # その項目の主な数字のときだけ当てる（F6 の「自分で用意したスキルの数」は分母なので当てない）
-ONLY_FOR = {"自分で用意したスキルの数": ("F5",), "自分で定義したエージェントの数": ("F8",)}
+ONLY_FOR = {"自分で用意したスキルの数": (), "自分で定義したエージェントの数": ()}
 # 複数の数字のどれかで満たす項目（D1・D3・F10）
 ANY_RULES = {
     "D1": ("許可の設定", "自動で判断するモード"),
     "D3": ("終了時に動くフック", "読むだけの確認役のエージェント", "終了時に動くフックの設定"),
-    "F10": ("設定にあるコネクタの数", "会話の記録での呼び出し"),
 }
 ZERO_ARI = re.compile(r"(?<![0-9])0(件|回|本|行|個)(あり|が合計)")
 
@@ -137,11 +128,15 @@ class ConsistencyBruteForceTest(unittest.TestCase):
                                 problems.append((iid, tool, v, label, facts[label], s))
                             if label == "目安を超えたファイル" and (num(facts[label]) == 0) != passed:
                                 problems.append((iid, tool, v, label, facts[label], s))
+                    # S2・S3（v2.5）: 系統のどれかが「止めていない」なら×、全部止めていれば○
+                    if iid in ("S2", "S3") and tool == "claude_code":
+                        if ("止めていない" in facts.values()) == passed:
+                            problems.append((iid, tool, v, "系統", s))
                     if iid in ANY_RULES and tool == "claude_code":
                         present = [facts[label] for label in ANY_RULES[iid] if label in facts]
                         if present and any(positive(x) for x in present) != passed:
                             problems.append((iid, tool, v, "どれか", present, s))
-        self.assertGreater(checked, 250)
+        self.assertGreater(checked, 250)  # v2.5: F5・F8・F10 を外し、S2・S3 の系統の組み合わせを足した
         self.maxDiff = None
         self.assertEqual(problems, [], "\n".join(map(repr, problems)))
 

@@ -19,10 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inventory as inventory_mod  # noqa: E402
 import reasons  # noqa: E402
 
-RESULT_SCHEMA_VERSION = 4
+RESULT_SCHEMA_VERSION = 5
 # facts.json の版。項目ごとの理由に使う数（件数・行数など）が入っているのは 3 から。
 # 4 から、今月の使用量（usage_this_month）とスキル・エージェントの本数（tool_counts）が入る
-SUPPORTED_FACTS_VERSIONS = (4,)
+SUPPORTED_FACTS_VERSIONS = (5,)
 
 
 JUDGE_LABELS = {
@@ -238,23 +238,40 @@ def compute_pillar_summary(scored_items: list[dict], pillars: dict, pillar_order
             "total_count": len(items_in),
             "passed_count": len(passed),
             "rate": rate,
+            # v5。判定できた数が項目数の半分以上か（16-1）。偽の柱は点数・型の名前に使わない
+            "sufficient": is_sufficient(len(judged), len(items_in)),
         }
     return summary
 
 
+def is_sufficient(judged: int, total: int) -> bool:
+    """判定できた数が、項目数の半分以上か（16-1）。"""
+    return total > 0 and judged * 2 >= total
+
+
+def _usable_rates(pillar_summary: dict) -> list:
+    return [p["rate"] for p in pillar_summary.values() if p["rate"] is not None and p.get("sufficient", True)]
+
+
 def compute_score(pillar_summary: dict) -> tuple[int | None, int]:
-    rates = [p["rate"] for p in pillar_summary.values() if p["rate"] is not None]
+    rates = _usable_rates(pillar_summary)
     judged_total = sum(p["judged_count"] for p in pillar_summary.values())
-    if not rates:
+    total = sum(p["total_count"] for p in pillar_summary.values())
+    if not rates or not is_sufficient(judged_total, total):
         return None, judged_total
     avg = sum(rates) / len(rates)
     return round_half_up(avg * 100), judged_total
 
 
-def compute_type_name(pillar_summary: dict) -> str:
-    strong = [p["name"] for pid, p in pillar_summary.items() if p["rate"] is not None and p["rate"] >= STRONG_THRESHOLD]
-    weak = [p["name"] for pid, p in pillar_summary.items() if p["rate"] is not None and p["rate"] < WEAK_THRESHOLD]
-    judged_pillars = [pid for pid, p in pillar_summary.items() if p["rate"] is not None]
+def compute_type_name(pillar_summary: dict) -> str | None:
+    judged_total = sum(p["judged_count"] for p in pillar_summary.values())
+    total = sum(p["total_count"] for p in pillar_summary.values())
+    if not is_sufficient(judged_total, total):
+        return None
+    usable = {pid: p for pid, p in pillar_summary.items() if p["rate"] is not None and p.get("sufficient", True)}
+    strong = [p["name"] for p in usable.values() if p["rate"] >= STRONG_THRESHOLD]
+    weak = [p["name"] for p in usable.values() if p["rate"] < WEAK_THRESHOLD]
+    judged_pillars = list(usable)
 
     if len(judged_pillars) == 4 and len(strong) == 4:
         return "全体が揃っている型"
@@ -356,6 +373,8 @@ def main() -> int:
     result = {
         "schema_version": RESULT_SCHEMA_VERSION,
         "score": score,
+        # v5。判定できた数が少なく、点数と型の名前を出さなかったとき真（16-1）
+        "score_withheld": score is None,
         "judged_item_count": judged_total,
         "total_item_count": len(items_def["items"]),
         "type_name": type_name,
@@ -369,6 +388,10 @@ def main() -> int:
         # v4。今月の使用量（時間・トークン）とスキル・エージェントの本数（道具ごと）。5-10
         "usage_this_month": facts.get("usage_this_month", {}),
         "tool_counts": facts.get("tool_counts", {}),
+        # v5。表紙のダッシュボード（16-3）。会話の記録が無ければ null
+        "daily_30d": facts.get("daily_30d"),
+        "usage_breadth": facts.get("usage_breadth"),
+        "autonomy": facts.get("autonomy"),
     }
 
     # 説明の一覧（5-9）。名前の一覧は手元用の ai_targets.json にだけある。読めなければ説明は全部置き換える
@@ -394,8 +417,11 @@ def main() -> int:
         fh.write("\n")
 
     print(f"result.json を書きました: {result_path}")
-    print(f"点数: {score} / 判定できた項目: {judged_total}/{len(items_def['items'])}")
-    print(f"型: {type_name}")
+    if score is None:
+        print(f"点数: 出していません（判定できた項目が少ないため: {judged_total}/{len(items_def['items'])}）")
+    else:
+        print(f"点数: {score} / 判定できた項目: {judged_total}/{len(items_def['items'])}")
+        print(f"型: {type_name}")
     if replaced:
         print(f"注意: 理由の文 {replaced} 件が検査に通らず、定型文に置き換えました（文の型の不具合です）。")
     total_inv = sum(len(v) for v in inv.values())

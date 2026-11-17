@@ -551,6 +551,9 @@ class ConversationStats:
     connector_use_counts: dict = field(default_factory=dict)
     # 今月の使用量（5-10）。時刻は「今の状態」の計算用だけに使い、外には出さない（本文・名前は持たない）。
     month_timestamps: list = field(default_factory=list)
+    # 表紙のダッシュボード（16-3）。直近30日の記録の時刻と、道具の呼び出しの回数
+    recent_timestamps: list = field(default_factory=list)
+    recent_tool_calls: int = 0
     month_tokens: dict = field(
         default_factory=lambda: {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     )
@@ -641,6 +644,8 @@ def scan_claude_jsonl(
                 entry_dt = _parse_ts(ts)
                 if entry_dt is not None and entry_dt >= cutoff:
                     touched_recent = True
+                    if entry_dt <= now:
+                        stats.recent_timestamps.append(entry_dt.timestamp())
                 in_month = entry_dt is not None and month_start <= entry_dt <= now
                 if in_month:
                     stats.month_timestamps.append(entry_dt.timestamp())
@@ -716,6 +721,8 @@ def scan_claude_jsonl(
                             stats.skill_use_counts[skill_name] = stats.skill_use_counts.get(skill_name, 0) + 1
 
                 if had_tool_use_in_block:
+                    if entry_dt is not None and entry_dt >= cutoff:
+                        stats.recent_tool_calls += tool_use_block_count
                     consecutive += tool_use_block_count
                     if consecutive > stats.max_consecutive_tool_calls:
                         stats.max_consecutive_tool_calls = consecutive
@@ -805,3 +812,50 @@ def mtime_within_days(path: Path, days: int, now: Optional[datetime] = None) -> 
 
 def any_file_mtime_within_days(paths: Iterable[Path], days: int, now: Optional[datetime] = None) -> bool:
     return any(mtime_within_days(p, days, now=now) for p in paths if p.exists())
+
+
+def daily_activity_jst(
+    epoch_seconds: Iterable[float], session_starts: Iterable[float], now: datetime, days: int = 30,
+    gap_seconds: int = ACTIVE_GAP_SECONDS,
+) -> list[dict]:
+    """直近 days 日の、日本時間の日ごとの使っていた時間（秒）と会話の数（16-3）。
+
+    時間の数え方は 5-10 と同じ（隣り合う時刻の間隔が gap_seconds 以内の分を足す）。
+    日をまたぐ間隔は、後ろの時刻の日に入れる。古い日から順に、日付（MM-DD）・秒・会話数を返す。
+    """
+    jst = timezone(timedelta(hours=9))
+    today = now.astimezone(jst).date()
+    first = today - timedelta(days=days - 1)
+    secs: dict = {}
+    sessions: dict = {}
+    ts = sorted(float(t) for t in epoch_seconds)
+    for a, b in zip(ts, ts[1:]):
+        delta = b - a
+        if 0 <= delta <= gap_seconds:
+            d = datetime.fromtimestamp(b, jst).date()
+            secs[d] = secs.get(d, 0.0) + delta
+    for t in session_starts:
+        d = datetime.fromtimestamp(float(t), jst).date()
+        sessions[d] = sessions.get(d, 0) + 1
+    out = []
+    for i in range(days):
+        d = first + timedelta(days=i)
+        out.append({"date": d.strftime("%m-%d"), "active_seconds": int(round(secs.get(d, 0.0))),
+                    "sessions": sessions.get(d, 0)})
+    return out
+
+
+# S2 の系統（16-2）。語は小文字で比べる
+SECRET_CATEGORIES: dict[str, tuple] = {
+    "env": (".env",),
+    "keys": (
+        "id_rsa", "id_ed25519", ".pem", ".pfx", ".p12", ".key", ".ssh",
+        "credential", "secret", "apikey", "api_key", "token",
+    ),
+}
+SECRET_CATEGORY_ORDER = ("env", "keys")
+
+
+def secret_categories_in_text(text: str) -> set:
+    low = text.lower()
+    return {c for c, words in SECRET_CATEGORIES.items() if any(w in low for w in words)}

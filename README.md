@@ -52,7 +52,7 @@ harness-check/
 ├── README.md            このファイル
 ├── AGENTS.md             AIへの手順書
 ├── CLAUDE.md             AGENTS.md と同じ内容
-├── items.json            点検項目の定義（23項目）
+├── items.json            点検項目の定義（20項目）
 ├── collect.py            事実を集めて facts.json を出す
 ├── readers/
 │   ├── common.py          道具共通の読み取りユーティリティ

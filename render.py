@@ -74,139 +74,192 @@ def _format_compact_number(n) -> str:
     return f"{n:,}"
 
 
-def _render_usage_summary(result: dict) -> str:
-    """点数のすぐ下に出す「今月の使用量」（時間・トークン・本数）。v4。"""
+def _exchanged_total(t: dict) -> int:
+    # 大きく出す数字は「実際にやりとりした量」＝入力＋出力。キャッシュの読み書きは内訳に回す
+    # （合計のほぼ全部がキャッシュで、実感のない数字になるため。4区分は排他）。
+    return int(t.get("input", 0) or 0) + int(t.get("output", 0) or 0)
+
+
+def _kpi(label: str, value: str, unit: str = "", detail: str = "") -> str:
+    u = f'<span class="u">{esc(unit)}</span>' if unit else ""
+    d = f'<div class="d">{detail}</div>' if detail else ""
+    return f'<div class="kpi"><div class="k">{esc(label)}</div><div class="v num">{esc(value)}{u}</div>{d}</div>'
+
+
+def _render_kpis(result: dict) -> str:
+    """今月の時間・トークン（v4）と、直近30日の任せた量（v5）の数字の列。"""
     usage = result.get("usage_this_month") or {}
-    counts = result.get("tool_counts") or {}
-    if not usage and not counts:
+    autonomy = result.get("autonomy")
+    if not usage and not autonomy:
         return ""
-
-    cc = usage.get("claude_code", {})
-    cx = usage.get("codex", {})
-    combined = usage.get("combined", {})
+    cc, cx, comb = usage.get("claude_code", {}), usage.get("codex", {}), usage.get("combined", {})
     month = usage.get("month")
+    cards = []
+    if usage:
+        def per_tool_hours() -> str:
+            parts = []
+            for label, u in (("Claude Code", cc), ("Codex", cx)):
+                parts.append(f"{label} {_format_hours(u.get('active_seconds', 0))}" if u.get("measured") else f"{label} ―")
+            return esc("／".join(parts))
 
-    def hours_cell(label: str, u: dict) -> str:
-        if not u.get("measured"):
-            return f'<div class="ucard"><div class="ulabel">{esc(label)}</div><div class="uvalue">―</div></div>'
-        return (
-            f'<div class="ucard"><div class="ulabel">{esc(label)}</div>'
-            f'<div class="uvalue">{esc(_format_hours(u.get("active_seconds", 0)))}<span class="uunit">時間</span></div></div>'
-        )
-
-    time_cards = (
-        hours_cell("Claude Code", cc) + hours_cell("Codex", cx)
-        + f'<div class="ucard"><div class="ulabel">合計</div><div class="uvalue">{esc(_format_hours(combined.get("active_seconds", 0)))}<span class="uunit">時間</span></div></div>'
-    )
-
-    def exchanged_total(t: dict) -> int:
-        # MEDIUM差し戻し: 大きく出す数字は「実際にやりとりした量」＝入力＋出力。
-        # キャッシュの読み書きは内訳の小さい文字で出す（今は合計のほぼ全部がキャッシュで、
-        # 実感のない数字になっていたため）。4区分は排他なので、足しても二重計上は無い。
-        return int(t.get("input", 0) or 0) + int(t.get("output", 0) or 0)
-
-    def token_cell(label: str, u: dict) -> str:
-        if not u.get("measured"):
-            return f'<div class="ucard"><div class="ulabel">{esc(label)}</div><div class="uvalue">―</div></div>'
-        t = u.get("tokens", {})
-        return (
-            f'<div class="ucard"><div class="ulabel">{esc(label)}</div>'
-            f'<div class="uvalue">{esc(_format_compact_number(exchanged_total(t)))}<span class="uunit">トークン</span></div>'
-            f'<div class="ubreak">入力{esc(_format_compact_number(t.get("input", 0)))}／'
-            f'出力{esc(_format_compact_number(t.get("output", 0)))}／'
-            f'キャッシュ読み{esc(_format_compact_number(t.get("cache_read", 0)))}／'
-            f'キャッシュ書き{esc(_format_compact_number(t.get("cache_write", 0)))}</div></div>'
-        )
-
-    token_cards = (
-        token_cell("Claude Code", cc) + token_cell("Codex", cx)
-        + f'<div class="ucard"><div class="ulabel">合計</div>'
-        f'<div class="uvalue">{esc(_format_compact_number(exchanged_total(combined.get("tokens", {}))))}<span class="uunit">トークン</span></div></div>'
-    )
-
-    cc_counts = counts.get("claude_code", {})
-    cx_counts = counts.get("codex", {})
-    count_cards = (
-        f'<div class="ucard"><div class="ulabel">Claude Code</div>'
-        f'<div class="uvalue">{esc(cc_counts.get("skills", 0))}<span class="uunit">スキル</span></div>'
-        f'<div class="ubreak">エージェント{esc(cc_counts.get("agents", 0))}体</div></div>'
-        f'<div class="ucard"><div class="ulabel">Codex</div>'
-        f'<div class="uvalue">{esc(cx_counts.get("skills", 0))}<span class="uunit">スキル</span></div>'
-        f'<div class="ubreak">エージェント{esc(cx_counts.get("agents", 0))}体</div></div>'
-    )
-
+        t = comb.get("tokens", {})
+        cards.append(_kpi(f"今月使った時間{'（' + month + '）' if month else ''}",
+                          _format_hours(comb.get("active_seconds", 0)), "時間", per_tool_hours()))
+        cards.append(_kpi("今月のトークン（入力＋出力）", _format_compact_number(_exchanged_total(t)), "",
+                          esc(f"キャッシュ読み{_format_compact_number(t.get('cache_read', 0))}・"
+                              f"書き{_format_compact_number(t.get('cache_write', 0))}")))
+    if isinstance(autonomy, dict):
+        cards.append(_kpi("直近30日に AI が動いた回数", f"{int(autonomy.get('tool_calls_30d', 0)):,}", "回",
+                          "道具の呼び出しの合計"))
+        cards.append(_kpi("人を挟まず続いた最長", str(autonomy.get("max_consecutive", 0)), "回",
+                          "道具の呼び出しの連続"))
+    elif usage:
+        counts = result.get("tool_counts") or {}
+        comb_c = counts.get("combined", {})
+        cards.append(_kpi("自分で用意したスキル", str(comb_c.get("skills", 0)), "本"))
+        cards.append(_kpi("自分で定義したエージェント", str(comb_c.get("agents", 0)), "件"))
     unreadable = cx.get("unreadable_session_count", 0)
-    unreadable_note = (
-        f'<p class="unote">Codexは会話の記録のうち{esc(unreadable)}件が圧縮されていて読めず、トークン・時間に含めていない。</p>'
-        if unreadable
-        else ""
-    )
+    note = (f'<p class="note">Codexは会話の記録のうち{esc(unreadable)}件が圧縮されていて読めず、'
+            f'トークン・時間に含めていない。</p>') if unreadable else ""
+    return f'<div class="kpis">{"".join(cards)}</div>{note}'
 
-    month_label = f"（{esc(month)}）" if month else ""
-    return f"""<div class="usage-summary">
-  <h4>今月使った時間・トークン{month_label}</h4>
-  <div class="ugrid">{time_cards}</div>
-  <div class="ugrid ugrid-gap">{token_cards}</div>
-  <h4>自分で用意したスキル・エージェントの本数</h4>
-  <div class="ugrid">{count_cards}</div>
-  <p class="unote">時間は、会話の記録の時刻の間隔が5分以内の連続を「使っていた時間」として足したもの（5分を超えた空きは数えない）。合計は2つの道具の値を単純に足したもの（同時に両方使っていれば重複する）。</p>
-  {unreadable_note}
-</div>"""
+
+def _render_daily_chart(result: dict) -> str:
+    """直近30日の日別の使っていた時間（棒グラフ・SVG）。v5。"""
+    days = result.get("daily_30d")
+    if not isinstance(days, list) or not days:
+        return ""
+    W, H, top, bottom = 600.0, 110.0, 14.0, 16.0
+    n = len(days)
+    slot = W / n
+    bw = slot * 0.66
+    secs = [max(0, int(d.get("active_seconds", 0) or 0)) for d in days]
+    mx = max(secs) if secs else 0
+    scale = (H - top - bottom) / mx if mx > 0 else 0
+    base = H - bottom
+    bars = []
+    for i, v in enumerate(secs):
+        x = i * slot + (slot - bw) / 2
+        h = v * scale
+        if v > 0:
+            h = max(h, 1.5)
+            bars.append(f'<rect class="bar" x="{x:.1f}" y="{base - h:.1f}" width="{bw:.1f}" height="{h:.1f}" rx="1.5"/>')
+        else:
+            bars.append(f'<rect class="bar zero" x="{x:.1f}" y="{base - 1.5:.1f}" width="{bw:.1f}" height="1.5"/>')
+    labels = []
+    for i in (0, n // 2, n - 1):
+        x = i * slot + slot / 2
+        anchor = "start" if i == 0 else ("end" if i == n - 1 else "middle")
+        lx = x - slot / 2 + 1 if i == 0 else (x + slot / 2 - 1 if i == n - 1 else x)
+        labels.append(f'<text x="{lx:.1f}" y="{H - 3:.1f}" text-anchor="{anchor}">{esc(days[i].get("date", ""))}</text>')
+    grid = ""
+    if mx > 0:
+        grid = (f'<line class="grid" x1="0" y1="{top:.1f}" x2="{W:.1f}" y2="{top:.1f}"/>'
+                f'<text x="{W:.1f}" y="{top - 3:.1f}" text-anchor="end">最大 {esc(_format_hours(mx))}時間</text>')
+    active_days = sum(1 for v in secs if v > 0)
+    sessions = sum(int(d.get("sessions", 0) or 0) for d in days)
+    svg = (f'<svg viewBox="0 0 {W:.0f} {H:.0f}" preserveAspectRatio="none" role="img" aria-label="直近30日の日別の使用時間">'
+           f'{grid}<line class="axis" x1="0" y1="{base:.1f}" x2="{W:.1f}" y2="{base:.1f}"/>{"".join(bars)}{"".join(labels)}</svg>')
+    return (f'<div class="chart"><div class="cap"><span>直近30日の日別の使用時間（Claude Code）</span>'
+            f'<span>使った日 <b class="num">{active_days}</b> / {n}日・始めた会話 <b class="num">{sessions}</b>件</span></div>'
+            f'{svg}</div>')
+
+
+def _render_breadth_and_autonomy(result: dict) -> str:
+    """使われている／眠っている本数（v5）と、任せた量の残り（v5）。"""
+    breadth = result.get("usage_breadth")
+    autonomy = result.get("autonomy")
+    if not isinstance(breadth, dict) and not isinstance(autonomy, dict):
+        return ""
+    rows = []
+    if isinstance(breadth, dict):
+        for key, label, unit in (("skills", "スキル", "本"), ("agents", "エージェント", "件"), ("connectors", "コネクタ", "個")):
+            b = breadth.get(key) or {}
+            own, used = int(b.get("own", 0) or 0), int(b.get("used", 0) or 0)
+            pct = (used / own * 100) if own else 0
+            rows.append(
+                f'<div class="brow"><span class="bl">{label}</span>'
+                f'<div class="track"><div class="used" style="width:{pct:.0f}%"></div></div>'
+                f'<span class="bn">使用 <b class="num">{used}</b> / {own}{unit}</span></div>'
+            )
+    left = (f'<div><div class="chart"><div class="cap"><span>直近30日に使われているもの／眠っているもの</span></div></div>'
+            f'{"".join(rows)}</div>') if rows else "<div></div>"
+    right = "<div></div>"
+    if isinstance(autonomy, dict):
+        right = (
+            '<div><div class="chart"><div class="cap"><span>人を挟まず任せて動いた会話（直近30日）</span></div></div><div class="auto">'
+            f'<div class="a"><div class="k">20回以上続いた会話</div><div class="v num">{esc(autonomy.get("sessions_20plus", 0))}<span class="u">件</span></div></div>'
+            f'<div class="a"><div class="k">エージェントの連携</div><div class="v num">{esc(autonomy.get("agent_relay_sessions", 0))}<span class="u">件</span></div></div>'
+            '</div></div>'
+        )
+    return f'<div class="breadth">{left}{right}</div>'
 
 
 def render_cover(result: dict) -> str:
     score = result.get("score")
-    score_display = esc(score) if score is not None else "―"
-    type_name = esc(result.get("type_name", ""))
+    withheld = score is None
+    type_name = result.get("type_name") or ""
     judged = result.get("judged_item_count", 0)
     total = result.get("total_item_count", 0)
-    usage_summary_html = _render_usage_summary(result)
+
+    dashboard = _render_kpis(result) + _render_daily_chart(result) + _render_breadth_and_autonomy(result)
+    dashboard_block = (f'<h2 class="first">今どれだけ使えているか<span class="sub">PCに残る会話の記録から数えた数。名前は出していない</span></h2>'
+                       f'{dashboard}') if dashboard else ""
 
     pillar_rows = []
     for pid in result["pillar_order"]:
         p = result["pillars"][pid]
         rate = p.get("rate")
+        sufficient = p.get("sufficient", True)
         pct = int(round((rate or 0) * 100))
-        pct_display = f"{pct}%" if rate is not None else "―"
+        if rate is None:
+            pct_display = "判定できず"
+        elif not sufficient:
+            pct_display = f"判定不足（{pct}%）"
+        else:
+            pct_display = f"達成率{pct}%"
+        cls = "" if sufficient else ' class="insufficient"'
         pillar_rows.append(
-            f"""<tr>
+            f"""<tr{cls}>
   <th>{esc(p['name'])}</th>
   <td class="barcell"><div class="track"><div class="fill" style="width:{pct}%"></div></div></td>
-  <td class="pt"><b>{esc(p['passed_count'])}</b> / {esc(p['judged_count'])}<span class="pctnum">達成率{esc(pct_display)}</span></td>
+  <td class="pt"><b>{esc(p['passed_count'])}</b> / {esc(p['judged_count'])}<span class="pctnum">{esc(pct_display)}</span></td>
 </tr>"""
         )
 
+    if withheld:
+        scorebox = f"""<div class="scorebox withheld"><div class="cap">点数</div><div class="score-num">―</div>
+  <div class="withheld-note">まだ測れるものが少ないため、点数と型の名前は出していません（判定できた項目が半分未満）。下の「次に直す項目」から始めてください。</div>
+  <div class="judged">全{esc(total)}項目中{esc(judged)}項目を判定</div></div>"""
+    else:
+        scorebox = f"""<div class="scorebox"><div class="cap">点数</div><div><span class="score-num num">{esc(score)}</span><span class="of">/ 100点</span></div>
+  <div class="now">{esc(type_name)}</div>
+  <div class="judged">全{esc(total)}項目中{esc(judged)}項目を判定</div></div>"""
+
     next_items = result.get("next_fixes", [])
-    next_html = []
     if next_items:
+        lis = []
         for i, it in enumerate(next_items, start=1):
             fix_text = it.get("fix_text", it.get("name", ""))
-            next_html.append(
-                f"""<li><span class="n">{i}</span><div class="body"><b>{esc(fix_text)}</b>
-<p>項目ID: {esc(it['id'])}（{esc(result['pillars'][it['pillar']]['name'])}）</p></div></li>"""
-            )
-        next_block = f"<h2>次に直す項目</h2><ol class=\"next3\">{''.join(next_html)}</ol>"
+            lis.append(f"""<li><span class="n num">{i}</span><div class="body"><b>{esc(fix_text)}</b>
+<p>項目ID: {esc(it['id'])}（{esc(result['pillars'][it['pillar']]['name'])}）</p></div></li>""")
+        next_block = f"<h2>次に直す項目</h2><ol class=\"next3\">{''.join(lis)}</ol>"
     else:
         next_block = "<h2>次に直す項目</h2><p>×の項目はありません。</p>"
 
     return f"""<section class="page">
-<header class="pagehead"><span class="t">ハーネス点検レポート</span></header>
-<div class="hero">
-  <p class="intro">ハーネス＝AIの周りに置く設定・指示・道具の一式。<br>見ているのはPCに残る設定と記録だけ。チャット画面での利用は数えていない。</p>
-  <div class="hero-main">
-    <div class="score-box"><span class="cap">点数</span><span class="score-num">{score_display}</span><span class="of">/ 100点</span></div>
-    <div class="typebox"><div class="now">{type_name}</div>
-      <div class="judged">全{esc(total)}項目中{esc(judged)}項目を判定</div></div>
-  </div>
-  {usage_summary_html}
-</div>
-<h2 class="first">柱ごとの結果</h2>
+<header class="pagehead"><span class="t">ハーネス点検レポート</span><span>1 / 表紙</span></header>
+<p class="intro">ハーネス＝AIの周りに置く設定・指示・道具の一式。<br>見ているのはPCに残る設定と記録だけ。チャット画面での利用は数えていない。</p>
+{dashboard_block}
+<h2>点数と型</h2>
+<div class="scorerow">
+{scorebox}
 <table class="pillars"><tbody>
 {''.join(pillar_rows)}
 </tbody></table>
-<p class="note">判定できなかった項目は、点数の分母から外している。達成率は、使った形跡を回数で見る項目（スキル・エージェント・コネクタの使用）が回数に応じて重みの変わる部分点になっているため、「満たした数／判定できた数」の割り算とは一致しないことがある。柱ごとの内訳は次ページ以降。</p>
+</div>
+<p class="note">判定できなかった項目は分母から外している。判定できた項目が半分未満の柱は「判定不足」として、点数と型の名前に使っていない。スキル・エージェント・コネクタの使用は回数に応じた部分点なので、達成率は「満たした数／判定できた数」と一致しないことがある。</p>
 {next_block}
-<footer class="pagefoot">1</footer>
 </section>"""
 
 
@@ -241,7 +294,7 @@ def render_pillar_pages(result: dict) -> str:
             )
             rows.append(
                 f"""<tbody class="item"><tr class="{status}">
-  <td class="mk">{STATUS_MARK[status]}</td>
+  <td class="mk"><span>{STATUS_MARK[status]}</span></td>
   <td class="name">{esc(iid)}　{esc(item['name'])}</td>
   <td class="judge">{esc(item['judge_label'])}</td>
   <td class="note">{note_text}</td>
@@ -371,8 +424,10 @@ def render_blindspots_page(result: dict) -> str:
 <li>claude.ai や ChatGPT などの、チャット画面だけでの利用は数えていない（PCに残る記録だけを見ている）。</li>
 <li>Codex の会話の記録は、標準機能で読める形になっていないため、使用実績が要る項目は「測定できず」にしている。</li>
 <li>この点検で検出した道具: {tools_line}。</li>
-<li>キーの走査の限界: よくある形のキー（sk-・AIza等）と、設定ファイルの中の名前でわかるもの（token・secret等）だけを探している。1MBを超えるファイルと、Gitの対象外のファイル（.env等）は見ていない。</li>
+<li>キーの走査の限界: よくある形のキー（<code>sk-</code>・<code>AIza</code>等）と、設定ファイルの中の名前でわかるもの（<code>token</code>・<code>secret</code>等）だけを探している。1MBを超えるファイルと、Gitの対象外のファイル（.env等）は見ていない。</li>
 <li>小文字だけの値や、小文字・数字・ハイフンだけの値は、名前や見本とみなして数えない。</li>
+<li>秘密ファイルを読ませない設定（S2）と、取り返しのつかない操作の承認（S3）は、設定の行とフックの中身に、系統ごとの語が書かれているかだけを見ている。フックを実行して、本当に止まるかは試していない。</li>
+<li>直近30日の日別グラフと「使われている／眠っているもの」「任せて動いた量」は、Claude Code の会話の記録だけから作っている。</li>
 <li>今月の使用時間の合計は、Claude Code と Codex の値を単純に足したもの。同時に両方を使っていた時間があれば、その分は重複して数えている。</li>
 <li>Codex のトークンは、会話の記録が圧縮されていて読めない分は足していない（推測で埋めていない）。</li>
 </ul>
