@@ -210,6 +210,7 @@ def _merged_permissions(workdir: Path, claude_home: Path) -> dict:
     ask: list[str] = []
     default_mode: Optional[str] = None
     hooks: dict = {}
+    pre_tool_commands: list[str] = []
     for f in settings_files(workdir, claude_home):
         data = _load_settings_json(f)
         if not data:
@@ -225,53 +226,140 @@ def _merged_permissions(workdir: Path, claude_home: Path) -> dict:
         if isinstance(h, dict):
             for k, v in h.items():
                 hooks[k] = hooks.get(k, 0) + (len(v) if isinstance(v, list) else 1)
-    return {"allow": allow, "deny": deny, "ask": ask, "default_mode": default_mode, "hooks": hooks}
+            pre_tool_commands.extend(_hook_commands(h.get("PreToolUse")))
+    return {
+        "allow": allow,
+        "deny": deny,
+        "ask": ask,
+        "default_mode": default_mode,
+        "hooks": hooks,
+        "pre_tool_commands": pre_tool_commands,
+    }
 
 
-_SECRET_FILE_PATTERN_WORDS = (".env", "secret", "credential", "id_rsa", ".pem", ".pfx", "apikey", "api_key")
-_DESTRUCTIVE_PATTERN_WORDS = (
-    "rm -rf",
-    "rm -f",
-    "--force",
-    " -f:",
-    "push --force",
-    "push -f",
-    "curl",
-    "wget",
-    "deploy",
-    "publish",
-    "vercel --prod",
-)
+def _hook_commands(entries) -> list[str]:
+    """hooks.PreToolUse の命令の文字列を集める（実行はしない。16-2）。"""
+    out: list[str] = []
+    if not isinstance(entries, list):
+        return out
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        for h in e.get("hooks") or []:
+            if isinstance(h, dict) and isinstance(h.get("command"), str):
+                out.append(h["command"])
+    return out
+
+
+def _hook_texts(commands: list[str], workdir: Path) -> list[str]:
+    """フックの命令の文字列と、命令が指している実在のファイルの中身（16-2）。
+
+    ファイルは読むだけ。`~`・`$HOME`・`$CLAUDE_PROJECT_DIR` を展開して、実在するものだけを読む。
+    中身は系統の語を探すのにだけ使い、外には出さない。
+    """
+    import os
+    import shlex
+
+    project_dir = common.find_git_root(workdir) or workdir
+    home = str(Path.home())
+    texts: list[str] = []
+    for cmd in commands:
+        texts.append(cmd)
+        expanded = (
+            cmd.replace("${CLAUDE_PROJECT_DIR}", str(project_dir))
+            .replace("$CLAUDE_PROJECT_DIR", str(project_dir))
+            .replace("${HOME}", home)
+            .replace("$HOME", home)
+        )
+        try:
+            tokens = shlex.split(expanded)
+        except ValueError:
+            tokens = expanded.split()
+        for tok in tokens:
+            tok = tok.strip("\"'")
+            if not tok or len(tok) > 1024:
+                continue
+            cand = Path(os.path.expanduser(tok))
+            try:
+                if cand.is_absolute() and cand.is_file():
+                    t = common.read_text_capped(cand, max_bytes=1024 * 1024)
+                    if t:
+                        texts.append(t)
+            except OSError:
+                continue
+    return texts
+
+
+import re as _re
+
+SECRET_CATEGORIES = common.SECRET_CATEGORIES
+
+# S3 の系統（16-2）。正規表現（小文字の文字列に当てる）
+DESTRUCTIVE_CATEGORIES: dict[str, tuple] = {
+    "delete": (r"(?<![a-z0-9_-])rm(?![a-z0-9_])", r"\brmdir\b", r"\bunlink\b", r"git clean", r"\bdelete\b"),
+    "force": (r"--force", r"push -f\b", r"reset --hard", r"--hard\b", r"git push"),
+    "outward": (
+        r"git push", r"\bpublish\b", r"\bdeploy\b", r"\bcurl\b", r"\bwget\b", r"\bscp\b",
+        r"\brsync\b", r"gh pr\b", r"gh release\b", r"\bvercel\b",
+    ),
+}
+DESTRUCTIVE_CATEGORY_ORDER = ("delete", "force", "outward")
+SECRET_CATEGORY_ORDER = common.SECRET_CATEGORY_ORDER
+
+
+def _is_read_rule(low: str) -> bool:
+    return "read(" in low or "read " in low
+
+
+secret_categories_in_text = common.secret_categories_in_text
+
+
+def destructive_categories_in_text(text: str) -> set[str]:
+    low = text.lower()
+    return {c for c, pats in DESTRUCTIVE_CATEGORIES.items() if any(_re.search(p, low) for p in pats)}
 
 
 def secret_file_rule_count(perms: dict) -> int:
     """禁止か承認の設定のうち、秘密ファイルの読み取りを止める行の数。"""
-    n = 0
-    for rule in perms.get("deny", []) + perms.get("ask", []):
-        low = rule.lower()
-        if "read(" not in low and "read " not in low:
-            continue
-        if any(w in low for w in _SECRET_FILE_PATTERN_WORDS):
-            n += 1
-    return n
+    return sum(
+        1 for rule in perms.get("deny", []) + perms.get("ask", [])
+        if _is_read_rule(rule.lower()) and secret_categories_in_text(rule)
+    )
 
 
 def destructive_rule_count(perms: dict) -> int:
-    """禁止か承認の設定のうち、削除・強制上書き・送信・公開を対象にした行の数。"""
-    n = 0
+    """禁止か承認の設定のうち、消す・強制上書き・外へ出すを対象にした行の数。"""
+    return sum(1 for rule in perms.get("deny", []) + perms.get("ask", []) if destructive_categories_in_text(rule))
+
+
+def secret_coverage(perms: dict, hook_texts: list[str]) -> dict:
+    """S2: 系統ごとに、設定の行かフックで止めているか（16-2）。"""
+    from_rules: set[str] = set()
     for rule in perms.get("deny", []) + perms.get("ask", []):
-        low = rule.lower()
-        if any(w in low for w in _DESTRUCTIVE_PATTERN_WORDS):
-            n += 1
-    return n
+        if _is_read_rule(rule.lower()):
+            from_rules |= secret_categories_in_text(rule)
+    from_hooks: set[str] = set()
+    for t in hook_texts:
+        from_hooks |= secret_categories_in_text(t)
+    return {c: (c in from_rules or c in from_hooks) for c in SECRET_CATEGORY_ORDER}
+
+
+def destructive_coverage(perms: dict, hook_texts: list[str]) -> dict:
+    """S3: 系統ごとに、設定の行かフックで止めているか（16-2）。"""
+    covered: set[str] = set()
+    for rule in perms.get("deny", []) + perms.get("ask", []):
+        covered |= destructive_categories_in_text(rule)
+    for t in hook_texts:
+        covered |= destructive_categories_in_text(t)
+    return {c: (c in covered) for c in DESTRUCTIVE_CATEGORY_ORDER}
 
 
 def deny_or_ask_blocks_secret_files(perms: dict) -> bool:
-    return secret_file_rule_count(perms) > 0
+    return all(secret_coverage(perms, []).values())
 
 
 def deny_or_ask_blocks_destructive_ops(perms: dict) -> bool:
-    return destructive_rule_count(perms) > 0
+    return all(destructive_coverage(perms, []).values())
 
 
 BYPASS_ALL_MODES = {"bypasspermissions", "yolo", "dangerously-skip-permissions"}
@@ -416,6 +504,10 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
     agent_counts: dict[str, int] = {}
     connector_counts: dict[str, int] = {}
     month_timestamps: list[float] = []
+    recent_timestamps: list[float] = []
+    recent_session_days: list[float] = []
+    tool_calls_recent = 0
+    sessions_20plus = 0
     month_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     # 今月のトークンの重複排除（HIGH差し戻し）: 同じ message.id の行が、同一ファイル内・ファイルを
     # またいだ先の両方で重複することがある。全セッションで1つの集合を共有し、message.id ごとに
@@ -452,11 +544,17 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
             any_two_agents_between_humans = True
             d4_hit_sessions += 1
         month_timestamps.extend(stats.month_timestamps)
+        recent_timestamps.extend(stats.recent_timestamps)
+        if stats.recent_timestamps:
+            recent_session_days.append(min(stats.recent_timestamps))
+        tool_calls_recent += stats.recent_tool_calls
+        if stats.recent_timestamps and stats.max_consecutive_tool_calls >= CONSECUTIVE_THRESHOLD:
+            sessions_20plus += 1
         for k in month_tokens:
             month_tokens[k] += stats.month_tokens.get(k, 0)
 
     facts["F6"] = {
-        "measured": facts["F5"]["pass"] and len(sessions) > 0,
+        "measured": len(sessions) > 0,
         "pass": len(used_skills) > 0,
         "count": len(used_skills),
         "own_count": len(skills),
@@ -476,7 +574,7 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
     facts["F7_target_count"] = len(f7_candidates)
 
     facts["F9"] = {
-        "measured": facts["F8"]["pass"] and len(sessions) > 0,
+        "measured": len(sessions) > 0,
         "pass": len(used_agents) > 0,
         "count": len(used_agents),
         "own_count": len(agents),
@@ -520,11 +618,28 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
     perms = _merged_permissions(workdir, claude_home)
     secret_rules = secret_file_rule_count(perms)
     destructive_rules = destructive_rule_count(perms)
-    facts["S2"] = {"measured": True, "pass": secret_rules > 0, "rule_count": secret_rules}
-    facts["S3"] = {"measured": True, "pass": destructive_rules > 0, "rule_count": destructive_rules}
-    facts["S4"] = {
+    hook_cmds = perms.get("pre_tool_commands", [])
+    hook_texts = _hook_texts(hook_cmds, workdir)
+    s2_cov = secret_coverage(perms, hook_texts)
+    s3_cov = destructive_coverage(perms, hook_texts)
+    facts["S2"] = {
         "measured": True,
-        "pass": not default_mode_is_bypass_all(perms),
+        "pass": all(s2_cov.values()),
+        "rule_count": secret_rules,
+        "hook_count": len(hook_cmds),
+        "covered": s2_cov,
+    }
+    facts["S3"] = {
+        "measured": True,
+        "pass": all(s3_cov.values()),
+        "rule_count": destructive_rules,
+        "hook_count": len(hook_cmds),
+        "covered": s3_cov,
+    }
+    has_settings = len(settings_files(workdir, claude_home)) > 0
+    facts["S4"] = {
+        "measured": has_settings,
+        "pass": (not default_mode_is_bypass_all(perms)) if has_settings else None,
         "mode_set": isinstance(perms.get("default_mode"), str),
     }
     allow_count = len(perms.get("allow", []))
@@ -583,6 +698,25 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
         "measured": True,
         "active_seconds": common.compute_active_seconds(month_timestamps),
         "tokens": month_tokens,
+    }
+
+    # 表紙のダッシュボード（16-3）。数だけ。名前・本文は持たない
+    mcp_names = set(mcp_server_names(workdir, claude_home))
+    facts["_dashboard"] = {
+        "measured": len(sessions) > 0,
+        "daily_30d": common.daily_activity_jst(recent_timestamps, recent_session_days, now=(now if now.tzinfo else now.astimezone()), days=RECENT_DAYS),
+        "breadth": {
+            "skills": {"own": len(skills), "used": len(used_skills)},
+            "agents": {"own": len(agents), "used": len(used_agents)},
+            # 設定（.mcp.json）にあるものと、記録で呼ばれたもの（claude.ai 側・プラグイン同梱を含む）を合わせる
+            "connectors": {"own": len(mcp_names | set(connector_counts)), "used": len(set(connector_counts))},
+        },
+        "autonomy": {
+            "tool_calls_30d": tool_calls_recent,
+            "max_consecutive": max_consecutive,
+            "sessions_20plus": sessions_20plus,
+            "agent_relay_sessions": d4_hit_sessions,
+        },
     }
 
     return facts

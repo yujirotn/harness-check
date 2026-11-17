@@ -24,7 +24,7 @@ from readers import claude_code  # noqa: E402
 from readers import codex  # noqa: E402
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 RECENT_DAYS = 30
 
 
@@ -131,9 +131,11 @@ def compute_s1(workdir: Path, claude_home: Path, codex_home: Path) -> dict:
     config_result = _scan_config_files_for_secrets(config_files)
 
     total = sum(repo_result["counts_by_kind"].values()) + sum(config_result["counts_by_kind"].values())
+    # 調べたファイルが0個なら、無いことを確かめられないので測定できず（16章）
+    scanned = int(repo_result.get("scanned_file_count", 0)) + int(config_result.get("scanned_file_count", 0))
     return {
-        "measured": True,
-        "pass": total == 0,
+        "measured": scanned > 0,
+        "pass": (total == 0) if scanned > 0 else None,
         "repo": repo_result,
         "config": config_result,
     }
@@ -232,11 +234,8 @@ def build_items(
     per_tool_item_ids = {
         "F1",
         "F2",
-        "F5",
         "F6",
-        "F8",
         "F9",
-        "F10",
         "F11",
         "S2",
         "S3",
@@ -405,6 +404,14 @@ def build_tool_counts(cc_detected: bool, codex_detected: bool, cc_facts: dict, c
         "codex": {"skills": codex_skills, "agents": codex_agents},
         "combined": {"skills": cc_skills + codex_skills, "agents": cc_agents + codex_agents},
     }
+
+
+def build_dashboard(cc_detected: bool, cc_facts: dict) -> dict:
+    """表紙のダッシュボード（16-3）。Claude Code の会話の記録から作る。数だけ。"""
+    d = cc_facts.get("_dashboard") if cc_detected else None
+    if not isinstance(d, dict) or not d.get("measured"):
+        return {"daily_30d": None, "usage_breadth": None, "autonomy": None}
+    return {"daily_30d": d.get("daily_30d"), "usage_breadth": d.get("breadth"), "autonomy": d.get("autonomy")}
 
 
 def build_inventory_skeleton(
@@ -623,6 +630,8 @@ def main() -> int:
         # v4。今月の使用量（時間・トークン）とスキル・エージェントの本数（道具ごと）。5-10
         "usage_this_month": usage_this_month,
         "tool_counts": tool_counts,
+        # v5。表紙のダッシュボード（直近30日の日別・使われている／眠っている本数・任せた量）。16-3
+        **build_dashboard(cc_detected, cc_facts),
     }
 
     ai_targets = build_ai_targets(

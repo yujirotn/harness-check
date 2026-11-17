@@ -1,6 +1,6 @@
 """項目ごとの理由（reason・facts、schema_version 3）のテスト。
 
-- 23項目 × 3状態（通った・通らなかった・判定なし）で、理由が空でなく300字以内で、
+- 20項目 × 3状態（通った・通らなかった・判定なし）で、理由が空でなく300字以内で、
   禁止のもの（パス・拡張子つきの名前・URL・メール・英数字の識別子）を含まないこと
 - facts が 0〜6個で、label 1〜40字・value 1〜60字
 - 検査の関数そのものが、禁止のものを見つけられること
@@ -77,15 +77,12 @@ SCENARIOS = {
         "fail": [(cc_cx(ai_target(13), ai_target(1)), {"claude_code": YES, "codex": NO})],
         "unmeasured": [(cc_cx(ai_target(3)), {"claude_code": SPLIT}), (cc_cx(), {})],
     },
-    "F5": {
-        "pass": [(cc_cx({"measured": True, "pass": True, "count": 12}), {})],
-        "fail": [(cc_cx({"measured": True, "pass": False, "count": 0}, {"measured": True, "pass": False, "count": 0}), {})],
-        "unmeasured": [(cc_cx(), {})],
-    },
     "F6": {
         "pass": [(cc_cx({"measured": True, "pass": True, "count": 3, "own_count": 12, "use_total": 41,
                          "session_count": 90}, CODEX_UNREADABLE), {})],
         "fail": [(cc_cx({"measured": True, "pass": False, "count": 0, "own_count": 2, "use_total": 0,
+                         "session_count": 5}), {}),
+                 (cc_cx({"measured": True, "pass": False, "count": 0, "own_count": 0, "use_total": 0,
                          "session_count": 5}), {})],
         "unmeasured": [
             (cc_cx({"measured": False, "pass": False, "count": 0, "own_count": 0, "use_total": 0, "session_count": 5}), {}),
@@ -98,30 +95,17 @@ SCENARIOS = {
         "fail": [(cc_cx(ai_target(5)), {"claude_code": NO})],
         "unmeasured": [(cc_cx(ai_target(0)), {}), (cc_cx(ai_target(5)), {"claude_code": SPLIT})],
     },
-    "F8": {
-        "pass": [(cc_cx({"measured": True, "pass": True, "count": 4}), {})],
-        "fail": [(cc_cx({"measured": True, "pass": False, "count": 0}), {})],
-        "unmeasured": [(cc_cx(), {})],
-    },
     "F9": {
         "pass": [(cc_cx({"measured": True, "pass": True, "count": 2, "own_count": 4, "use_total": 7,
                          "session_count": 9}), {})],
         "fail": [(cc_cx({"measured": True, "pass": False, "count": 0, "own_count": 4, "use_total": 0,
+                         "session_count": 9}), {}),
+                 (cc_cx({"measured": True, "pass": False, "count": 0, "own_count": 0, "use_total": 0,
                          "session_count": 9}), {})],
         "unmeasured": [
             (cc_cx({"measured": False, "pass": False, "count": 0, "own_count": 0, "use_total": 0, "session_count": 9}), {}),
             (cc_cx(None, CODEX_UNREADABLE), {}),
         ],
-    },
-    "F10": {
-        "pass": [
-            (cc_cx({"measured": True, "pass": True, "config_count": 3, "used_in_records": True},
-                   {"measured": True, "pass": True}), {}),
-            (cc_cx({"measured": True, "pass": True, "config_count": 0, "used_in_records": True}), {}),
-        ],
-        "fail": [(cc_cx({"measured": True, "pass": False, "config_count": 0, "used_in_records": False},
-                        {"measured": True, "pass": False}), {})],
-        "unmeasured": [(cc_cx(), {})],
     },
     "F11": {
         "pass": [
@@ -152,19 +136,28 @@ SCENARIOS = {
     },
     "S2": {
         "pass": [
-            (cc_cx({"measured": True, "pass": True, "rule_count": 3}, CODEX_UNREADABLE), {}),
-            (cc_cx(None, {"measured": True, "pass": True, "rule_count": 1}), {}),
+            (cc_cx({"measured": True, "pass": True, "rule_count": 3, "hook_count": 1,
+                    "covered": {"env": True, "keys": True}}, CODEX_UNREADABLE), {}),
+            (cc_cx(None, {"measured": True, "pass": True, "rule_count": 2, "covered": {"env": True, "keys": True}}), {}),
         ],
         "fail": [
-            (cc_cx({"measured": True, "pass": False, "rule_count": 0}), {}),
-            (cc_cx(None, {"measured": True, "pass": False, "rule_count": 0}), {}),
+            (cc_cx({"measured": True, "pass": False, "rule_count": 0, "hook_count": 0,
+                    "covered": {"env": False, "keys": False}}), {}),
+            (cc_cx({"measured": True, "pass": False, "rule_count": 1, "hook_count": 0,
+                    "covered": {"env": True, "keys": False}}), {}),
+            (cc_cx(None, {"measured": True, "pass": False, "rule_count": 1, "covered": {"env": True, "keys": False}}), {}),
         ],
         "unmeasured": [(cc_cx(None, CODEX_UNREADABLE), {})],
     },
     "S3": {
-        "pass": [(cc_cx({"measured": True, "pass": True, "rule_count": 6}, {"measured": True, "pass": True, **FLAGS_OK}), {})],
+        "pass": [(cc_cx({"measured": True, "pass": True, "rule_count": 6, "hook_count": 2,
+                         "covered": {"delete": True, "force": True, "outward": True}},
+                        {"measured": True, "pass": True, **FLAGS_OK}), {})],
         "fail": [
-            (cc_cx({"measured": True, "pass": False, "rule_count": 0}), {}),
+            (cc_cx({"measured": True, "pass": False, "rule_count": 0, "hook_count": 0,
+                    "covered": {"delete": False, "force": False, "outward": False}}), {}),
+            (cc_cx({"measured": True, "pass": False, "rule_count": 1, "hook_count": 0,
+                    "covered": {"delete": False, "force": False, "outward": True}}), {}),
             (cc_cx(None, {"measured": True, "pass": False, **FLAGS_BAD}), {}),
         ],
         "unmeasured": [(cc_cx(None, NO_SIGNAL), {})],
@@ -178,7 +171,8 @@ SCENARIOS = {
             (cc_cx({"measured": True, "pass": False, "mode_set": True}), {}),
             (cc_cx(None, {"measured": True, "pass": False, **FLAGS_BAD}), {}),
         ],
-        "unmeasured": [(cc_cx(None, NO_SIGNAL), {})],
+        "unmeasured": [(cc_cx(None, NO_SIGNAL), {}),
+                       (cc_cx({"measured": False, "pass": None, "mode_set": False}), {})],
     },
     "G1": {
         "pass": [({"combined": {"measured": True, "pass": True, "is_git_repo": True, "has_remote": True,
@@ -310,9 +304,9 @@ def run_scenario(iid, item_facts, ai_for_item):
 
 
 class AllItemsAllStatesTest(unittest.TestCase):
-    def test_scenarios_cover_23_items_and_3_states(self):
+    def test_scenarios_cover_20_items_and_3_states(self):
         self.assertEqual(set(SCENARIOS), set(ITEMS))
-        self.assertEqual(len(ITEMS), 23)
+        self.assertEqual(len(ITEMS), 20)
         for iid, by_status in SCENARIOS.items():
             self.assertEqual(set(by_status), {"pass", "fail", "unmeasured"}, iid)
 

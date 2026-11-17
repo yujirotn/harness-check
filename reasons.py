@@ -214,21 +214,6 @@ _f7 = _ai_item("自分で用意したスキルの説明文", "自分で用意し
                "「何をするか」か「いつ使うか」が欠けているものがある")
 
 
-def _own_count(word: str, unit: str):
-    def build(tool, v, r, ai):
-        n = _n(v, "count")
-        crit = F("基準", f"1{unit}以上")
-        if r["pass"]:
-            return Part(f"{word}が{n}{unit}あり、1{unit}以上{MEETS}", [F(f"{word}の数", f"{n}{unit}"), crit])
-        return Part(f"{word}が見つからず、1{unit}以上{NOT_MEETS}", [F(f"{word}の数", f"0{unit}"), crit])
-
-    return build
-
-
-_f5 = _own_count("自分で用意したスキル", "本")
-_f8 = _own_count("自分で定義したエージェント", "件")
-
-
 def _usage(word: str, unit: str, verb: str):
     """F6・F9（直近30日に使われたか）。"""
 
@@ -243,6 +228,9 @@ def _usage(word: str, unit: str, verb: str):
             return Part("会話の記録が見つからなかったため、" + CANNOT, [F("会話の記録", "0件")])
         facts = [F(f"{word}の数", f"{own}{unit}"), F(f"直近30日に{verb}数", f"{used}{unit}"),
                  F("直近30日の回数の合計", f"{total}回"), crit]
+        if own == 0:
+            return Part(f"{word}が0{unit}のため、直近30日に1回以上{NOT_MEETS}",
+                        [F(f"{word}の数", f"0{unit}"), crit])
         if r["pass"]:
             return Part(f"直近30日に、{word}{own}{unit}のうち{used}{unit}が合計{total}回{verb[:-1]}、1回以上{MEETS}", facts)
         return Part(f"直近30日に、{word}{own}{unit}が{verb}記録は0回で、1回以上{NOT_MEETS}", facts)
@@ -252,21 +240,6 @@ def _usage(word: str, unit: str, verb: str):
 
 _f6 = _usage("自分で用意したスキル", "本", "使われた")
 _f9 = _usage("自分で定義したエージェント", "件", "使われた")
-
-
-def _f10(tool, v, r, ai):
-    crit = F("基準", "1つ以上")
-    if tool == "codex":
-        if r["pass"]:
-            return Part(f"設定ファイルにコネクタの定義があり、1つ以上{MEETS}", [F("コネクタの定義", "あり"), crit])
-        return Part(f"設定ファイルにコネクタの定義が無く、1つ以上{NOT_MEETS}", [F("コネクタの定義", "なし"), crit])
-    n, used = _n(v, "config_count"), bool(v.get("used_in_records"))
-    facts = [F("設定にあるコネクタの数", f"{n}個"), F("会話の記録での呼び出し", yn(used)), crit]
-    if r["pass"] and n > 0:
-        return Part(f"設定にコネクタが{n}個あり、1つ以上{MEETS}", facts)
-    if r["pass"]:
-        return Part(f"設定にはコネクタがありませんが、会話の記録にコネクタの呼び出しがあり、1つ以上{MEETS}", facts)
-    return Part(f"設定にもコネクタが無く、会話の記録にもコネクタの呼び出しが無いため、1つ以上{NOT_MEETS}", facts)
 
 
 def _f11(tool, v, r, ai):
@@ -295,21 +268,31 @@ def _f11(tool, v, r, ai):
     return Part(f"直近30日に、コネクタの呼び出しは0回で、1回以上{NOT_MEETS}", [F("直近30日の呼び出し", f"{calls}回"), crit])
 
 
-def _rule_count(what: str):
-    """S2・S3（Claude Code）: 禁止か承認の設定の行数。"""
+CATEGORY_LABELS = {
+    "env": "環境変数のファイル系", "keys": "鍵・認証情報系",
+    "delete": "消す操作", "force": "強制上書き", "outward": "外へ出す操作",
+}
+
+
+def _coverage(what: str, order: tuple):
+    """S2・S3（Claude Code）: 系統ごとに、禁止か承認の設定かフックで止めているか（16-2）。"""
 
     def build(tool, v, r, ai):
-        n = _n(v, "rule_count")
-        facts = [F("該当する設定", f"{n}行"), F("基準", "1行以上")]
+        cov = v.get("covered") or {}
+        n, hooks = _n(v, "rule_count"), _n(v, "hook_count")
+        facts = [F(CATEGORY_LABELS[c], "止めている" if cov.get(c) else "止めていない") for c in order]
+        facts += [F("該当する設定", f"{n}行"), F("道具を使う前に動くフック", f"{hooks}個"),
+                  F("基準", f"{len(order)}系統すべてを止めている")]
         if r["pass"]:
-            return Part(f"禁止か承認の設定に、{what}行が{n}行あり、1行以上{MEETS}", facts)
-        return Part(f"禁止か承認の設定に、{what}行が無く、1行以上{NOT_MEETS}", facts)
+            return Part(f"{what}の{len(order)}系統すべてを、禁止か承認の設定かフックで止めていて、基準を満たしています", facts)
+        missing = "、".join(CATEGORY_LABELS[c] for c in order if not cov.get(c))
+        return Part(f"{what}のうち、{missing}を止めていないため、{len(order)}系統すべてという基準を満たしていません", facts)
 
     return build
 
 
-_s2_cc = _rule_count("秘密ファイルの読み取りを止める")
-_s3_cc = _rule_count("削除・強制上書き・送信・公開のどれかを対象にした")
+_s2_cc = _coverage("秘密ファイルの読み取り", ("env", "keys"))
+_s3_cc = _coverage("取り返しのつかない操作", ("delete", "force", "outward"))
 
 
 def _s2(tool, v, r, ai):
@@ -317,10 +300,13 @@ def _s2(tool, v, r, ai):
         if not r["measured"]:
             return Part("この項目を設定から確かめる方法が無いため、" + CANNOT)
         n = _n(v, "rule_count")
-        facts = [F("許可の仕組みの該当する設定", f"{n}行"), F("基準", "1行以上")]
+        cov = v.get("covered") or {}
+        facts = [F(CATEGORY_LABELS[c], "止めている" if cov.get(c) else "止めていない") for c in ("env", "keys")]
+        facts += [F("許可の仕組みの該当する設定", f"{n}行"), F("基準", "2系統すべてを止めている")]
         if r["pass"]:
-            return Part(f"許可の仕組みに、秘密ファイルの読み取りを止める行が{n}行あり、1行以上{MEETS}", facts)
-        return Part(f"許可の仕組みに、秘密ファイルの読み取りを止める行が無く、1行以上{NOT_MEETS}", facts)
+            return Part("許可の仕組みで、秘密ファイルの読み取りの2系統すべてを止めていて、基準を満たしています", facts)
+        missing = "、".join(CATEGORY_LABELS[c] for c in ("env", "keys") if not cov.get(c))
+        return Part(f"許可の仕組みで、{missing}の読み取りを止めていないため、2系統すべてという基準を満たしていません", facts)
     return _s2_cc(tool, v, r, ai)
 
 
@@ -357,6 +343,8 @@ def _s4(tool, v, r, ai):
         if r["pass"]:
             return Part("「確認しない」と「制限なし」の組み合わせにはなっておらず、基準を満たしています", facts)
         return Part("「確認しない」と「制限なし」の組み合わせになっていて、基準を満たしていません", facts)
+    if not r["measured"]:
+        return Part("設定ファイルが1つも無いため、" + CANNOT, [F("設定ファイル", "0個")])
     mode_set = bool(v.get("mode_set"))
     facts = [F("既定のモードの指定", yn(mode_set)), F("確認をすべて省くモード", "はい" if not r["pass"] else "いいえ"),
              F("基準", "確認をすべて省くモードではない")]
@@ -480,7 +468,7 @@ def _d5(tool, v, r, ai):
 
 def _s1(c, status, ai):
     if status == "unmeasured":
-        return Part("キーを走査する対象が見つからなかったため、" + CANNOT)
+        return Part("キーを走査するファイルが0個だったため、" + CANNOT, [F("調べたファイル", "0個")])
     repo, config = c.get("repo") or {}, c.get("config") or {}
     rn = sum(int(x) for x in (repo.get("counts_by_kind") or {}).values())
     cn = sum(int(x) for x in (config.get("counts_by_kind") or {}).values())
@@ -549,8 +537,8 @@ ToolBuilder = Callable[[str, dict, dict, object], Part]
 CombinedBuilder = Callable[[dict, str, object], Part]
 
 ITEM_BUILDERS: dict[str, ToolBuilder] = {
-    "F1": _f1, "F2": _f2, "F3": _f3, "F4": _f4, "F5": _f5, "F6": _f6, "F7": _f7, "F8": _f8, "F9": _f9,
-    "F10": _f10, "F11": _f11, "S2": _s2, "S3": _s3, "S4": _s4,
+    "F1": _f1, "F2": _f2, "F3": _f3, "F4": _f4, "F6": _f6, "F7": _f7, "F9": _f9,
+    "F11": _f11, "S2": _s2, "S3": _s3, "S4": _s4,
     "D1": _d1, "D2": _d2, "D3": _d3, "D4": _d4, "D5": _d5,
 }
 COMBINED_BUILDERS: dict[str, CombinedBuilder] = {"S1": _s1, "G1": _g1, "G2": _g2, "G3": _g3}

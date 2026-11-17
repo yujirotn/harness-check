@@ -536,8 +536,9 @@ TOP_LEVEL_KEYS = {
     "schema_version", "score", "judged_item_count", "total_item_count", "type_name",
     "pillar_order", "pillars", "items", "next_fixes", "reference", "tools_detected",
     "window_days", "usage_this_month", "tool_counts", "inventory",
+    "score_withheld", "daily_30d", "usage_breadth", "autonomy",
 }
-PILLAR_KEYS = {"name", "judged_count", "total_count", "passed_count", "rate"}
+PILLAR_KEYS = {"name", "judged_count", "total_count", "passed_count", "rate", "sufficient"}
 ITEM_KEYS = {"name", "pillar", "judge", "judge_label", "status", "reason", "facts", "usage_tier"}
 USAGE_TIER_KEYS = {"count", "credit_num", "credit_den", "label"}
 NEXT_FIX_KEYS = {"id", "name", "pillar", "fix_text"}
@@ -600,7 +601,7 @@ class ResultSchemaExactKeyMatchTest(unittest.TestCase):
                 self.assertEqual(set(p), PILLAR_KEYS)
 
     def test_every_item_key_matches_exactly(self):
-        self.assertEqual(len(self.result["items"]), 23)
+        self.assertEqual(len(self.result["items"]), 20)
         for iid, item in self.result["items"].items():
             with self.subTest(item=iid):
                 self.assertEqual(set(item), ITEM_KEYS)

@@ -90,9 +90,10 @@ class PassScenarioTest(unittest.TestCase):
         self.assertTrue(self.item("F3")["per_tool"]["claude_code"]["target_found"])
         self.assertTrue(self.item("F4")["per_tool"]["claude_code"]["target_found"])
 
-    def test_f5_pass(self):
-        self.assertTrue(self.cc("F5")["pass"])
-        self.assertTrue(self.codexf("F5")["pass"])
+    def test_f5_f8_f10_are_not_scored_items(self):
+        """v2.5（16章）: 置いただけで○の F5・F8・F10 は廃止した。"""
+        for iid in ("F5", "F8", "F10"):
+            self.assertNotIn(iid, self.facts["items"])
 
     def test_f6_pass(self):
         self.assertTrue(self.cc("F6")["pass"])
@@ -111,16 +112,8 @@ class PassScenarioTest(unittest.TestCase):
         self.assertTrue(cc_paths[0].endswith("demo-skill/SKILL.md"))
         self.assertTrue(Path(cc_paths[0]).exists())
 
-    def test_f8_pass(self):
-        self.assertTrue(self.cc("F8")["pass"])
-        self.assertTrue(self.codexf("F8")["pass"])
-
     def test_f9_pass(self):
         self.assertTrue(self.cc("F9")["pass"])
-
-    def test_f10_pass(self):
-        self.assertTrue(self.cc("F10")["pass"])
-        self.assertTrue(self.codexf("F10")["pass"])
 
     def test_f11_pass(self):
         self.assertTrue(self.cc("F11")["pass"])
@@ -207,11 +200,7 @@ class FailScenarioTest(unittest.TestCase):
         self.assertFalse(self.cc("F1")["pass"])
         self.assertFalse(self.codexf("F1")["pass"])
 
-    def test_f5_pass_when_skill_dir_has_entries(self):
-        # claude_home_fail はF6/F9の「古い使用」を確かめるためスキル自体は置いている。
-        self.assertTrue(self.cc("F5")["pass"])
-
-    def test_f5_fail_when_no_skills_at_all(self):
+    def test_f6_fail_when_no_skills_at_all(self):
         """finding #6: F5 の×（自作スキルが1本も無い場合）を見本で確かめる。"""
         import shutil
         import tempfile
@@ -225,12 +214,13 @@ class FailScenarioTest(unittest.TestCase):
             codex_home = copy_fixture("codex_home_fail", tmp_path / "codex_home")
             home = copy_fixture("home_fail", tmp_path / "home")
             facts = run_collect(tmp_path, workdir, claude_home, codex_home, home)
-            f5 = facts["items"]["F5"]["per_tool"]["claude_code"]
-            self.assertTrue(f5["measured"])
-            self.assertFalse(f5["pass"])
-            self.assertEqual(f5["count"], 0)
+            # v2.5: スキルが0本でも、会話の記録があれば F6 は×（測定できずにしない）
+            f6 = facts["items"]["F6"]["per_tool"]["claude_code"]
+            self.assertTrue(f6["measured"])
+            self.assertFalse(f6["pass"])
+            self.assertEqual(f6["own_count"], 0)
 
-    def test_f8_fail_when_no_agents_at_all(self):
+    def test_f9_fail_when_no_agents_at_all(self):
         """finding #6: F8 の×（エージェント定義が1つも無い場合）を見本で確かめる。"""
         import shutil
         import tempfile
@@ -244,19 +234,16 @@ class FailScenarioTest(unittest.TestCase):
             codex_home = copy_fixture("codex_home_fail", tmp_path / "codex_home")
             home = copy_fixture("home_fail", tmp_path / "home")
             facts = run_collect(tmp_path, workdir, claude_home, codex_home, home)
-            f8 = facts["items"]["F8"]["per_tool"]["claude_code"]
-            self.assertTrue(f8["measured"])
-            self.assertFalse(f8["pass"])
-            self.assertEqual(f8["count"], 0)
+            f9 = facts["items"]["F9"]["per_tool"]["claude_code"]
+            self.assertTrue(f9["measured"])
+            self.assertFalse(f9["pass"])
+            self.assertEqual(f9["own_count"], 0)
 
     def test_f6_fail_old_usage(self):
         self.assertFalse(self.cc("F6")["pass"])
 
     def test_f9_fail_old_usage(self):
         self.assertFalse(self.cc("F9")["pass"])
-
-    def test_f10_fail_no_connector(self):
-        self.assertFalse(self.cc("F10")["pass"])
 
     def test_f11_fail(self):
         self.assertFalse(self.cc("F11")["pass"])
@@ -493,6 +480,7 @@ class CodexNewConfigFormatTest(unittest.TestCase):
             "\n"
             '[permissions.myprofile.filesystem.":workspace_roots"]\n'
             '"**/*.env" = "deny"\n'
+            '"**/*.pem" = "deny"\n'
         )
         with tempfile.TemporaryDirectory() as td:
             facts = self._run_with_config(Path(td), config)
@@ -510,6 +498,7 @@ class CodexNewConfigFormatTest(unittest.TestCase):
             "\n"
             "[permissions.MyProfile.filesystem]\n"
             '".env" = "deny"\n'
+            '"id_rsa" = "deny"\n'
         )
         with tempfile.TemporaryDirectory() as td:
             facts = self._run_with_config(Path(td), config)
@@ -597,7 +586,7 @@ class CodexTomllibFallbackTest(unittest.TestCase):
             'default_permissions = "myprofile"\n'
             "\n"
             "[permissions.myprofile.filesystem]\n"
-            '":workspace_roots" = { "." = "write", "**/*.env" = "deny" }\n'
+            '":workspace_roots" = { "." = "write", "**/*.env" = "deny", "**/*.pem" = "deny" }\n'
         )
         with tempfile.TemporaryDirectory() as td:
             facts = self._without_tomllib(lambda: self._collect_codex_facts(Path(td), config))
@@ -613,6 +602,7 @@ class CodexTomllibFallbackTest(unittest.TestCase):
             "\n"
             "[permissions.MyProfile.filesystem]\n"
             '".env" = "deny"\n'
+            '"id_rsa" = "deny"\n'
         )
         with tempfile.TemporaryDirectory() as td:
             facts = self._without_tomllib(lambda: self._collect_codex_facts(Path(td), config))

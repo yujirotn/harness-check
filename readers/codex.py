@@ -26,7 +26,6 @@ _BUILTIN_PERMISSION_PROFILES = {"read-only", "workspace", "danger-full-access"}
 
 # S2: 許可の仕組み（permissions.<name>.filesystem）の中の、秘密ファイルらしいパスの印。
 # Claude Code 側の S2 判定（readers/claude_code.py）と同じ語の一覧。
-_SECRET_FILE_PATTERN_WORDS = (".env", "secret", "credential", "id_rsa", ".pem", ".pfx", "apikey", "api_key")
 
 # Codex の会話の記録のファイル名（`rollout-2026-11-16T16-17-47-<id>.jsonl` 等）から
 # 作られた日時を読む。圧縮済み（.jsonl.zst）でもファイル名の日時だけは読める。
@@ -161,7 +160,7 @@ def _is_builtin_permission_name(value: Optional[str]) -> bool:
     return isinstance(value, str) and value.strip().lower() in _BUILTIN_PERMISSION_PROFILES
 
 
-def _secret_file_deny_count_from_dict(filesystem_node) -> int:
+def _secret_file_deny_count_from_dict(filesystem_node, cats: Optional[set] = None) -> int:
     """`permissions.<name>.filesystem` の中身（辞書）を再帰的に調べる。
 
     `tomllib` で読んだ辞書は、公式の書き方（`":workspace_roots" = { ... }` のような
@@ -173,15 +172,18 @@ def _secret_file_deny_count_from_dict(filesystem_node) -> int:
     n = 0
     for key, val in filesystem_node.items():
         if isinstance(val, dict):
-            n += _secret_file_deny_count_from_dict(val)
+            n += _secret_file_deny_count_from_dict(val, cats)
             continue
         if isinstance(val, str) and val.strip().lower() == "deny":
-            if any(w in str(key).lower() for w in _SECRET_FILE_PATTERN_WORDS):
+            found = common.secret_categories_in_text(str(key))
+            if found:
                 n += 1
+                if cats is not None:
+                    cats |= found
     return n
 
 
-def _secret_file_deny_count_fallback_text(codex_home: Path, profile_name: str) -> int:
+def _secret_file_deny_count_fallback_text(codex_home: Path, profile_name: str, cats: Optional[set] = None) -> int:
     """`tomllib` が無い環境（3.9・3.10）向けの簡易読み取り。
 
     公式の書き方2通り（`[permissions.<name>.filesystem]` 直下の一行テーブル
@@ -198,7 +200,10 @@ def _secret_file_deny_count_fallback_text(codex_home: Path, profile_name: str) -
     def count_scalar(key: str, val: str) -> int:
         if val.strip().strip('"').strip("'").lower() != "deny":
             return 0
-        return 1 if any(w in key.lower() for w in _SECRET_FILE_PATTERN_WORDS) else 0
+        found = common.secret_categories_in_text(key)
+        if found and cats is not None:
+            cats.update(found)
+        return 1 if found else 0
 
     direct = common.toml_table_scalars(text, base_path)
     for key, val in direct.items():
@@ -216,7 +221,9 @@ def _secret_file_deny_count_fallback_text(codex_home: Path, profile_name: str) -
     return n
 
 
-def secret_file_deny_rule_count(codex_home: Path, profile_name: Optional[str], permissions_table) -> int:
+def secret_file_deny_rule_count(
+    codex_home: Path, profile_name: Optional[str], permissions_table, cats: Optional[set] = None
+) -> int:
     """S2: 自分で決めた許可の仕組み（`permissions.<name>.filesystem`）の中で、
 
     秘密ファイルらしいパスを `deny`（読み取り拒否）にしている設定の数。
@@ -230,8 +237,8 @@ def secret_file_deny_rule_count(codex_home: Path, profile_name: Optional[str], p
     if permissions_table is not None:
         profile = permissions_table.get(profile_name)
         filesystem = profile.get("filesystem") if isinstance(profile, dict) else None
-        return _secret_file_deny_count_from_dict(filesystem)
-    return _secret_file_deny_count_fallback_text(codex_home, profile_name)
+        return _secret_file_deny_count_from_dict(filesystem, cats)
+    return _secret_file_deny_count_fallback_text(codex_home, profile_name, cats)
 
 
 def hooks_json_has_stop(codex_home: Path, workdir: Path) -> Optional[bool]:
@@ -350,14 +357,19 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
         else None
     )
 
+    secret_cats: set = set()
     secret_rule_count = (
-        0 if config_broken else secret_file_deny_rule_count(codex_home, custom_permission_profile, permissions_table)
+        0
+        if config_broken
+        else secret_file_deny_rule_count(codex_home, custom_permission_profile, permissions_table, secret_cats)
     )
+    s2_cov = {c: (c in secret_cats) for c in common.SECRET_CATEGORY_ORDER}
     s2_measured = (not config_broken) and (custom_permission_profile is not None)
     facts["S2"] = {
         "measured": s2_measured,
-        "pass": (secret_rule_count > 0) if s2_measured else None,
+        "pass": all(s2_cov.values()) if s2_measured else None,
         "rule_count": secret_rule_count,
+        "covered": s2_cov,
     }
 
     has_approval_signal = (not config_broken) and (
