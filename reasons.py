@@ -96,7 +96,14 @@ MEETS = "という基準を満たしています"
 NOT_MEETS = "という基準を満たしていません"
 CANNOT = "判定できませんでした"
 CODEX_LOG_UNREADABLE = "会話の記録が標準の機能で読めない形のため、" + CANNOT
+CODEX_LOG_NOT_FOUND = "会話の記録が見つからなかったため、" + CANNOT
+CODEX_NO_USAGE_SIGNAL = "この項目を会話の記録から確かめる方法が無いため、" + CANNOT
 NO_TOOL = "Claude CodeもCodexも見つからなかったため、" + CANNOT
+
+
+def _codex_log_state(v: dict) -> tuple:
+    """Codex の会話の記録: (読めた件数, 読めなかった件数)。D5・F11 の判定に使う。"""
+    return _n(v, "read_session_count"), _n(v, "unreadable_session_count")
 
 
 def F(label: str, value) -> dict:
@@ -227,7 +234,7 @@ def _usage(word: str, unit: str, verb: str):
 
     def build(tool, v, r, ai):
         if tool == "codex":
-            return Part(CODEX_LOG_UNREADABLE)
+            return Part(CODEX_NO_USAGE_SIGNAL)
         own, used, total, sessions = _n(v, "own_count"), _n(v, "count"), _n(v, "use_total"), _n(v, "session_count")
         crit = F("基準", "直近30日に1回以上")
         if not r["measured"]:
@@ -264,7 +271,16 @@ def _f10(tool, v, r, ai):
 
 def _f11(tool, v, r, ai):
     if tool == "codex":
-        return Part(CODEX_LOG_UNREADABLE)
+        read, unreadable = _codex_log_state(v)
+        if not r["measured"]:
+            if read == 0 and unreadable == 0:
+                return Part(CODEX_LOG_NOT_FOUND, [F("会話の記録", "0件")])
+            return Part(CODEX_LOG_UNREADABLE)
+        crit = F("基準", "直近30日に1回以上")
+        facts = [F("読めた会話の記録", f"{read}件"), crit]
+        if r["pass"]:
+            return Part(f"直近30日に読めた会話の記録{read}件の中に、コネクタの呼び出しがあり、1回以上{MEETS}", facts)
+        return Part(f"直近30日に読めた会話の記録{read}件の中に、コネクタの呼び出しは無く、1回以上{NOT_MEETS}", facts)
     calls, sessions = _n(v, "calls_30d"), _n(v, "session_count")
     if not r["measured"]:
         return Part("会話の記録が見つからなかったため、" + CANNOT, [F("会話の記録", "0件")])
@@ -298,7 +314,13 @@ _s3_cc = _rule_count("削除・強制上書き・送信・公開のどれかを�
 
 def _s2(tool, v, r, ai):
     if tool == "codex":
-        return Part("この項目を設定から確かめる方法が無いため、" + CANNOT)
+        if not r["measured"]:
+            return Part("この項目を設定から確かめる方法が無いため、" + CANNOT)
+        n = _n(v, "rule_count")
+        facts = [F("許可の仕組みの該当する設定", f"{n}行"), F("基準", "1行以上")]
+        if r["pass"]:
+            return Part(f"許可の仕組みに、秘密ファイルの読み取りを止める行が{n}行あり、1行以上{MEETS}", facts)
+        return Part(f"許可の仕組みに、秘密ファイルの読み取りを止める行が無く、1行以上{NOT_MEETS}", facts)
     return _s2_cc(tool, v, r, ai)
 
 
@@ -307,7 +329,7 @@ def _codex_flags(v) -> list:
             F("制限なしの実行モード", "はい" if v.get("full_access") else "いいえ")]
 
 
-CODEX_NO_SIGNAL = "設定ファイルに承認の方式も実行モードも書かれていないため、" + CANNOT
+CODEX_NO_SIGNAL = "承認の方式や実行モードを判定できる設定が見つからなかったため、" + CANNOT
 
 
 def _s3(tool, v, r, ai):
@@ -410,7 +432,7 @@ def _d3(tool, v, r, ai):
 
 def _d4(tool, v, r, ai):
     if tool == "codex":
-        return Part(CODEX_LOG_UNREADABLE)
+        return Part(CODEX_NO_USAGE_SIGNAL)
     own, hits, sessions = _n(v, "own_count"), _n(v, "hit_count"), _n(v, "session_count")
     if not r["measured"]:
         if own == 0:
@@ -424,7 +446,24 @@ def _d4(tool, v, r, ai):
 
 def _d5(tool, v, r, ai):
     if tool == "codex":
-        return Part(CODEX_LOG_UNREADABLE)
+        read, unreadable = _codex_log_state(v)
+        if not r["measured"]:
+            if read == 0 and unreadable == 0:
+                return Part(CODEX_LOG_NOT_FOUND, [F("会話の記録", "0件")])
+            return Part(CODEX_LOG_UNREADABLE)
+        mx, th = _n(v, "max_consecutive"), _n(v, "threshold") or 20
+        facts = [F("読めた会話の記録", f"{read}件"), F("いちばん長く続いた回数", f"{mx}回"), F("基準", f"{th}回以上")]
+        if r["pass"]:
+            return Part(
+                f"直近30日に読めた会話の記録{read}件の中で、人の発言を挟まずに続いた道具の呼び出しは最長{mx}回で、"
+                f"{th}回以上{MEETS}",
+                facts,
+            )
+        return Part(
+            f"直近30日に読めた会話の記録{read}件の中で、人の発言を挟まずに続いた道具の呼び出しは最長{mx}回で、"
+            f"{th}回以上{NOT_MEETS}",
+            facts,
+        )
     mx, th = _n(v, "max_consecutive"), _n(v, "threshold") or 20
     if not r["measured"]:
         return Part("会話の記録が見つからなかったため、" + CANNOT, [F("会話の記録", "0件")])

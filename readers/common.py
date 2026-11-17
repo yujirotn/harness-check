@@ -433,6 +433,56 @@ def toml_has_table(text: str, table_prefix: str) -> bool:
     return bool(pattern.search(text))
 
 
+_TABLE_HEADER_RE = re.compile(r"^\[\[?\s*(.+?)\s*\]\]?$")
+_TABLE_SEGMENT_RE = re.compile(r'"((?:[^"\\]|\\.)*)"|\'([^\']*)\'|([^."\']+)')
+_TABLE_SCALAR_LINE_RE = re.compile(r'^(?:"((?:[^"\\]|\\.)*)"|\'([^\']*)\'|([^\s"\'=]+))\s*=\s*(.+)$')
+
+
+def _split_table_path(raw: str) -> tuple:
+    """`a.b."c d"` のようなテーブル見出しを区切る（簡易。入れ子のクォートまでは見ない）。"""
+    parts = []
+    for m in _TABLE_SEGMENT_RE.finditer(raw):
+        seg = m.group(1) if m.group(1) is not None else (m.group(2) if m.group(2) is not None else m.group(3))
+        if seg is not None and seg.strip() != "":
+            parts.append(seg.strip())
+    return tuple(parts)
+
+
+def toml_table_scalars(text: str, dotted_path: str) -> dict[str, str]:
+    """`[dotted_path]` テーブル直下の `key = value` のスカラーだけを返す（雑なTOML読み取り）。
+
+    入れ子のテーブル（`[dotted_path.sub]`）やその他のテーブルの中身は見ない。
+    キーが引用符つきでもクォートを外して返す。値も文字列として返す（クォートは外す）。
+    Codex の許可の仕組み（`permissions.<name>.filesystem` など）を読むためだけの、本ツールの
+    判定に必要な範囲の実装（完全な TOML パーサではない）。
+    """
+    target = _split_table_path(dotted_path)
+    out: dict[str, str] = {}
+    in_target = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        header_m = _TABLE_HEADER_RE.match(line)
+        if header_m:
+            in_target = _split_table_path(header_m.group(1)) == target
+            continue
+        if not in_target:
+            continue
+        m = _TABLE_SCALAR_LINE_RE.match(line)
+        if not m:
+            continue
+        key = m.group(1) if m.group(1) is not None else (m.group(2) if m.group(2) is not None else m.group(3))
+        val = m.group(4).strip()
+        val = val.split("#", 1)[0].strip() if not (val.startswith('"') or val.startswith("'")) else val
+        if val.startswith('"') and val.endswith('"') and len(val) >= 2:
+            val = val[1:-1]
+        elif val.startswith("'") and val.endswith("'") and len(val) >= 2:
+            val = val[1:-1]
+        out[key] = val
+    return out
+
+
 # ---------------------------------------------------------------------------
 # 会話の記録（JSONL）の読み取り（5-3）
 # ---------------------------------------------------------------------------

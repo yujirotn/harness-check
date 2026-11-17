@@ -127,9 +127,17 @@ SCENARIOS = {
         "pass": [
             (cc_cx({"measured": True, "pass": True, "calls_30d": 17, "session_count": 9}), {}),
             (cc_cx({"measured": True, "pass": True, "calls_30d": 0, "session_count": 9}), {}),
+            (cc_cx(None, {"measured": True, "pass": True, "read_session_count": 4, "unreadable_session_count": 10}), {}),
         ],
-        "fail": [(cc_cx({"measured": True, "pass": False, "calls_30d": 0, "session_count": 9}, CODEX_UNREADABLE), {})],
-        "unmeasured": [(cc_cx({"measured": False, "pass": False, "calls_30d": 0, "session_count": 0}), {})],
+        "fail": [
+            (cc_cx({"measured": True, "pass": False, "calls_30d": 0, "session_count": 9}, CODEX_UNREADABLE), {}),
+            (cc_cx(None, {"measured": True, "pass": False, "read_session_count": 2, "unreadable_session_count": 0}), {}),
+        ],
+        "unmeasured": [
+            (cc_cx({"measured": False, "pass": False, "calls_30d": 0, "session_count": 0}), {}),
+            (cc_cx(None, {"measured": False, "pass": None, "read_session_count": 0, "unreadable_session_count": 0}), {}),
+            (cc_cx(None, {"measured": False, "pass": None, "read_session_count": 0, "unreadable_session_count": 12}), {}),
+        ],
     },
     "S1": {
         "pass": [({"combined": {"measured": True, "pass": True,
@@ -143,8 +151,14 @@ SCENARIOS = {
         "unmeasured": [({"combined": {"measured": False, "pass": None}}, {})],
     },
     "S2": {
-        "pass": [(cc_cx({"measured": True, "pass": True, "rule_count": 3}, CODEX_UNREADABLE), {})],
-        "fail": [(cc_cx({"measured": True, "pass": False, "rule_count": 0}), {})],
+        "pass": [
+            (cc_cx({"measured": True, "pass": True, "rule_count": 3}, CODEX_UNREADABLE), {}),
+            (cc_cx(None, {"measured": True, "pass": True, "rule_count": 1}), {}),
+        ],
+        "fail": [
+            (cc_cx({"measured": True, "pass": False, "rule_count": 0}), {}),
+            (cc_cx(None, {"measured": True, "pass": False, "rule_count": 0}), {}),
+        ],
         "unmeasured": [(cc_cx(None, CODEX_UNREADABLE), {})],
     },
     "S3": {
@@ -265,13 +279,23 @@ SCENARIOS = {
         ],
     },
     "D5": {
-        "pass": [(cc_cx({"measured": True, "pass": True, "max_consecutive": 26, "threshold": 20,
-                         "session_count": 40}), {})],
-        "fail": [(cc_cx({"measured": True, "pass": False, "max_consecutive": 7, "threshold": 20,
-                         "session_count": 40}), {})],
+        "pass": [
+            (cc_cx({"measured": True, "pass": True, "max_consecutive": 26, "threshold": 20,
+                    "session_count": 40}), {}),
+            (cc_cx(None, {"measured": True, "pass": True, "max_consecutive": 24, "threshold": 20,
+                          "read_session_count": 3, "unreadable_session_count": 5}), {}),
+        ],
+        "fail": [
+            (cc_cx({"measured": True, "pass": False, "max_consecutive": 7, "threshold": 20,
+                    "session_count": 40}), {}),
+            (cc_cx(None, {"measured": True, "pass": False, "max_consecutive": 2, "threshold": 20,
+                          "read_session_count": 1, "unreadable_session_count": 0}), {}),
+        ],
         "unmeasured": [
             (cc_cx({"measured": False, "pass": False, "max_consecutive": 0, "threshold": 20, "session_count": 0}), {}),
             (cc_cx(None, CODEX_UNREADABLE), {}),
+            (cc_cx(None, {"measured": False, "pass": None, "max_consecutive": 0, "threshold": 20,
+                          "read_session_count": 0, "unreadable_session_count": 7}), {}),
         ],
     },
 }

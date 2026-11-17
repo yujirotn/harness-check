@@ -320,6 +320,225 @@ class FailScenarioTest(unittest.TestCase):
         self.assertFalse(self.cc("D5")["pass"])
 
 
+def _jsonl_line(ts: str, sub_type: str, **extra) -> str:
+    payload = {"type": sub_type, **extra}
+    return json.dumps({"timestamp": ts, "type": "response_item", "payload": payload}, ensure_ascii=False)
+
+
+def _human_line(ts: str) -> str:
+    return _jsonl_line(ts, "message", role="user")
+
+
+def write_codex_session(path, filename_dt: str, lines: list[str]) -> None:
+    """Codex の会話の記録（平文の見本）を1件書く。filename_dt は 'YYYY-MM-DDTHH-MM-SS' の形。"""
+    path.mkdir(parents=True, exist_ok=True)
+    f = path / f"rollout-{filename_dt}-00000000-0000-0000-0000-000000000000.jsonl"
+    f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_codex_compressed_session(path, filename_dt: str) -> None:
+    """圧縮済み（見本は本物のzstdでなくてよい。拡張子だけで読まない判定を確かめる）。"""
+    path.mkdir(parents=True, exist_ok=True)
+    f = path / f"rollout-{filename_dt}-11111111-1111-1111-1111-111111111111.jsonl.zst"
+    f.write_bytes(b"\x28\xb5\x2f\xfd not a real zstd frame, just bytes")
+
+
+class CodexNewConfigFormatTest(unittest.TestCase):
+    """新しい設定の書き方（`default_permissions` 等）でも、安全の柱の項目が判定できることを確かめる。
+
+    見本（codex_home_fail）には旧キー（approval_policy・sandbox_mode）が無いので、
+    新キーだけを置いた config.toml に差し替えて確かめる（旧キーのみの見本は codex_home_pass/fail で
+    既にカバーされている）。
+    """
+
+    def _run_with_config(self, tmp_path: Path, config_text: str) -> dict:
+        workdir = copy_fixture("repo_fail", tmp_path / "workdir")
+        make_git_repo(workdir, with_remote=False, track_all=True)
+        claude_home = copy_fixture("claude_home_fail", tmp_path / "claude_home")
+        codex_home = copy_fixture("codex_home_fail", tmp_path / "codex_home")
+        (codex_home / "config.toml").write_text(config_text, encoding="utf-8")
+        home = copy_fixture("home_fail", tmp_path / "home")
+        return run_collect(tmp_path, workdir, claude_home, codex_home, home)
+
+    def test_s3_s4_d1_pass_with_default_permissions_workspace(self):
+        """旧キー無し・新キー `default_permissions = ":workspace"` だけで判定できる。"""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._run_with_config(Path(td), 'model = "gpt-test"\ndefault_permissions = ":workspace"\n')
+            codex = facts["items"]
+            self.assertTrue(codex["S3"]["per_tool"]["codex"]["measured"])
+            self.assertTrue(codex["S3"]["per_tool"]["codex"]["pass"])
+            self.assertTrue(codex["S4"]["per_tool"]["codex"]["measured"])
+            self.assertTrue(codex["S4"]["per_tool"]["codex"]["pass"])
+            self.assertTrue(codex["D1"]["per_tool"]["codex"]["measured"])
+            self.assertTrue(codex["D1"]["per_tool"]["codex"]["pass"])
+
+    def test_s3_fails_with_default_permissions_danger_full_access(self):
+        """オーナーの実環境と同じ形（`default_permissions = ":danger-full-access"` のみ）。
+
+        以前は approval_policy・sandbox_mode が無いため「測定できず」だった。
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._run_with_config(
+                Path(td), 'model = "gpt-test"\ndefault_permissions = ":danger-full-access"\n'
+            )
+            s3 = facts["items"]["S3"]["per_tool"]["codex"]
+            self.assertTrue(s3["measured"])
+            self.assertFalse(s3["pass"])
+            self.assertTrue(s3["full_access"])
+
+    def test_s2_pass_via_custom_permission_profile_filesystem_deny(self):
+        """新しい許可の仕組み（`permissions.<name>.filesystem`）で秘密ファイルの読み取りを拒否している。"""
+        import tempfile
+
+        config = (
+            'model = "gpt-test"\n'
+            'default_permissions = "myprofile"\n'
+            "\n"
+            "[permissions.myprofile]\n"
+            'description = "demo"\n'
+            "\n"
+            "[permissions.myprofile.filesystem]\n"
+            '".env" = "deny"\n'
+            '"id_rsa" = "deny"\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._run_with_config(Path(td), config)
+            s2 = facts["items"]["S2"]["per_tool"]["codex"]
+            self.assertTrue(s2["measured"])
+            self.assertTrue(s2["pass"])
+            self.assertEqual(s2["rule_count"], 2)
+
+    def test_s2_fail_via_custom_permission_profile_without_deny(self):
+        import tempfile
+
+        config = (
+            'model = "gpt-test"\n'
+            'default_permissions = "myprofile"\n'
+            "\n"
+            "[permissions.myprofile]\n"
+            'description = "demo"\n'
+            "\n"
+            "[permissions.myprofile.filesystem]\n"
+            '"**" = "read"\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._run_with_config(Path(td), config)
+            s2 = facts["items"]["S2"]["per_tool"]["codex"]
+            self.assertTrue(s2["measured"])
+            self.assertFalse(s2["pass"])
+            self.assertEqual(s2["rule_count"], 0)
+
+    def test_s2_unmeasured_with_builtin_profile(self):
+        """組み込みプロファイル（`:read-only` 等）には自分で設定できる許可の仕組みが無いので測定できず。"""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._run_with_config(Path(td), 'model = "gpt-test"\ndefault_permissions = ":read-only"\n')
+            s2 = facts["items"]["S2"]["per_tool"]["codex"]
+            self.assertFalse(s2["measured"])
+
+
+class CodexSessionLogTest(unittest.TestCase):
+    """会話の記録（平文の .jsonl）から D5・F11 が判定できることを確かめる。
+
+    圧縮済み（.jsonl.zst）は標準機能では読めないため、件数には数えるが中身は読まない。
+    """
+
+    def _run_with_sessions(self, tmp_path: Path, build_sessions) -> dict:
+        workdir = copy_fixture("repo_fail", tmp_path / "workdir")
+        make_git_repo(workdir, with_remote=False, track_all=True)
+        claude_home = copy_fixture("claude_home_fail", tmp_path / "claude_home")
+        codex_home = copy_fixture("codex_home_fail", tmp_path / "codex_home")
+        build_sessions(codex_home / "sessions")
+        home = copy_fixture("home_fail", tmp_path / "home")
+        return run_collect(tmp_path, workdir, claude_home, codex_home, home)
+
+    def test_d5_and_f11_pass_from_plain_session(self):
+        def build(sessions_dir):
+            # 1本の会話: 人の発言 → 連続21回の道具呼び出し（うち1回はコネクタ）→ D5・F11 とも○
+            ts = "2026-11-05T09:00:00Z"
+            lines = [_human_line(ts)]
+            for i in range(20):
+                lines.append(_jsonl_line(ts, "custom_tool_call", name="exec"))
+            lines.append(_jsonl_line(ts, "function_call", name="js", namespace="mcp__cua_repl"))
+            write_codex_session(sessions_dir / "2026" / "11" / "05", "2026-11-05T09-00-00", lines)
+
+        with __import__("tempfile").TemporaryDirectory() as td:
+            facts = self._run_with_sessions(Path(td), build)
+            codex_items = facts["items"]
+            d5 = codex_items["D5"]["per_tool"]["codex"]
+            f11 = codex_items["F11"]["per_tool"]["codex"]
+            self.assertTrue(d5["measured"])
+            self.assertTrue(d5["pass"])
+            self.assertGreaterEqual(d5["max_consecutive"], 20)
+            self.assertEqual(d5["read_session_count"], 1)
+            self.assertTrue(f11["measured"])
+            self.assertTrue(f11["pass"])
+
+    def test_d5_and_f11_fail_from_plain_session_without_mcp_or_long_run(self):
+        def build(sessions_dir):
+            ts = "2026-11-06T09:00:00Z"
+            lines = [_human_line(ts), _jsonl_line(ts, "custom_tool_call", name="exec"),
+                     _jsonl_line(ts, "custom_tool_call", name="exec")]
+            write_codex_session(sessions_dir / "2026" / "11" / "06", "2026-11-06T09-00-00", lines)
+
+        with __import__("tempfile").TemporaryDirectory() as td:
+            facts = self._run_with_sessions(Path(td), build)
+            codex_items = facts["items"]
+            d5 = codex_items["D5"]["per_tool"]["codex"]
+            f11 = codex_items["F11"]["per_tool"]["codex"]
+            self.assertTrue(d5["measured"])
+            self.assertFalse(d5["pass"])
+            self.assertTrue(f11["measured"])
+            self.assertFalse(f11["pass"])
+
+    def test_compressed_sessions_are_counted_but_not_guessed(self):
+        """直近30日ぶんがすべて .jsonl.zst のときは「測定できず」。読めなかった件数は facts に残る。"""
+
+        def build(sessions_dir):
+            write_codex_compressed_session(sessions_dir / "2026" / "11" / "07", "2026-11-07T09-00-00")
+            write_codex_compressed_session(sessions_dir / "2026" / "11" / "08", "2026-11-08T09-00-00")
+
+        with __import__("tempfile").TemporaryDirectory() as td:
+            facts = self._run_with_sessions(Path(td), build)
+            codex_items = facts["items"]
+            d5 = codex_items["D5"]["per_tool"]["codex"]
+            f11 = codex_items["F11"]["per_tool"]["codex"]
+            self.assertFalse(d5["measured"])
+            self.assertIsNone(d5["pass"])
+            self.assertEqual(d5["unreadable_session_count"], 2)
+            self.assertEqual(d5["read_session_count"], 0)
+            self.assertFalse(f11["measured"])
+
+    def test_old_sessions_outside_window_are_ignored(self):
+        def build(sessions_dir):
+            ts = "2026-01-01T09:00:00Z"
+            lines = [_human_line(ts)] + [_jsonl_line(ts, "custom_tool_call", name="exec") for _ in range(30)]
+            write_codex_session(sessions_dir / "2026" / "01" / "01", "2026-01-01T09-00-00", lines)
+
+        with __import__("tempfile").TemporaryDirectory() as td:
+            facts = self._run_with_sessions(Path(td), build)
+            d5 = facts["items"]["D5"]["per_tool"]["codex"]
+            self.assertFalse(d5["measured"])
+            self.assertEqual(d5["read_session_count"], 0)
+            self.assertEqual(d5["unreadable_session_count"], 0)
+
+    def test_no_sessions_at_all_is_unmeasured(self):
+        def build(sessions_dir):
+            pass
+
+        with __import__("tempfile").TemporaryDirectory() as td:
+            facts = self._run_with_sessions(Path(td), build)
+            d5 = facts["items"]["D5"]["per_tool"]["codex"]
+            f11 = facts["items"]["F11"]["per_tool"]["codex"]
+            self.assertFalse(d5["measured"])
+            self.assertFalse(f11["measured"])
+
+
 class F2LongInstructionTest(unittest.TestCase):
     """F2 単独: 長すぎる指示ファイルで× になることを確かめる（別フィクスチャ）。"""
 

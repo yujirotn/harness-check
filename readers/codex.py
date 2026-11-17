@@ -1,11 +1,17 @@
 """Codex 用の読み取り部品。読むだけ・通信なし。
 
-Codex の会話の記録は圧縮されていて標準機能で読めないため、使用実績が要る項目
-（F6・F9・F11・D4・D5）と S2 は「測定できず」として扱う（SPEC 10章）。
+Codex の会話の記録（`~/.codex/sessions/`）は、最近のものは平文の `.jsonl`、
+時間が経つと `.jsonl.zst`（zstd 圧縮）になる。圧縮形式は Python 標準機能だけでは
+読めないため（3.14 未満に `compression.zstd` が無い）、読めた平文の記録だけを使って
+F11・D5 を判定する。F6・F9・D4 は、平文でも「自分で用意したスキル／エージェント」の
+呼び出しを区別する仕組みが無いため、引き続き「測定できず」とする（SPEC 10章・13章）。
 """
 
 from __future__ import annotations
 
+import json
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +20,20 @@ from . import common
 
 MAX_STARTUP_BYTES = 32 * 1024
 RECENT_DAYS = 30
+
+# `default_permissions` の組み込みプロファイル名（先頭の `:` を外した形・小文字）。
+_BUILTIN_PERMISSION_PROFILES = {"read-only", "workspace", "danger-full-access"}
+
+# S2: 許可の仕組み（permissions.<name>.filesystem）の中の、秘密ファイルらしいパスの印。
+# Claude Code 側の S2 判定（readers/claude_code.py）と同じ語の一覧。
+_SECRET_FILE_PATTERN_WORDS = (".env", "secret", "credential", "id_rsa", ".pem", ".pfx", "apikey", "api_key")
+
+# Codex の会話の記録のファイル名（`rollout-2026-11-16T16-17-47-<id>.jsonl` 等）から
+# 作られた日時を読む。圧縮済み（.jsonl.zst）でもファイル名の日時だけは読める。
+_ROLLOUT_NAME_RE = re.compile(r"rollout-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-")
+
+# 道具の呼び出しとして数える response_item の種類（D5・F11で使う。名前には依らない）。
+_TOOL_CALL_SUBTYPES = {"function_call", "custom_tool_call", "mcp_tool_call", "local_shell_call"}
 
 
 def global_instruction_file(codex_home: Path) -> Optional[Path]:
@@ -78,17 +98,51 @@ def mcp_servers_present(codex_home: Path) -> bool:
 def _approval_and_sandbox(codex_home: Path) -> dict:
     text = config_toml_text(codex_home)
     if text is None:
-        return {"approval_policy": None, "sandbox_mode": None}
+        return {"approval_policy": None, "sandbox_mode": None, "default_permissions": None}
     scalars = common.toml_top_level_scalars(text)
     return {
         "approval_policy": scalars.get("approval_policy"),
         "sandbox_mode": scalars.get("sandbox_mode"),
+        # 新しい書き方（許可の仕組み）。`:read-only` 等の組み込み名か、自分で決めた名前。
+        "default_permissions": scalars.get("default_permissions"),
     }
 
 
-def hooks_json_has_stop(codex_home: Path, workdir: Path) -> Optional[bool]:
-    import json
+def _normalize_permission_profile(value: Optional[str]) -> Optional[str]:
+    """`default_permissions` の値を正規化する（先頭の `:` を外し、小文字にする）。"""
+    if not isinstance(value, str):
+        return None
+    v = value.strip().strip('"').strip("'").strip()
+    if v.startswith(":"):
+        v = v[1:]
+    v = v.strip().lower()
+    return v or None
 
+
+def secret_file_deny_rule_count(codex_home: Path, profile_name: Optional[str]) -> int:
+    """S2: 自分で決めた許可の仕組み（`permissions.<name>.filesystem`）の中で、
+
+    秘密ファイルらしいパスを `deny`（読み取り拒否）にしている行の数。
+    組み込みプロファイル（`:read-only` 等）は自分でパスを指定できないため対象外
+    （呼び出す側が profile_name に None を渡す）。
+    """
+    if not profile_name:
+        return 0
+    text = config_toml_text(codex_home)
+    if text is None:
+        return 0
+    table = common.toml_table_scalars(text, f"permissions.{profile_name}.filesystem")
+    n = 0
+    for key, val in table.items():
+        if val.strip().strip('"').strip("'").lower() != "deny":
+            continue
+        low_key = key.lower()
+        if any(w in low_key for w in _SECRET_FILE_PATTERN_WORDS):
+            n += 1
+    return n
+
+
+def hooks_json_has_stop(codex_home: Path, workdir: Path) -> Optional[bool]:
     for base in (codex_home, workdir / ".codex"):
         p = base / "hooks.json"
         text = common.read_text_capped(p, max_bytes=2 * 1024 * 1024)
@@ -158,19 +212,53 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
 
     mcp_present = mcp_servers_present(codex_home)
     facts["F10"] = {"measured": True, "pass": mcp_present}
-    facts["F11"] = {"measured": False, "pass": None}
+
+    # 会話の記録（平文の分だけ）から D5・F11 を判定する。圧縮分（.jsonl.zst）は読めないため
+    # 読めた件数・読めなかった件数の両方を facts に残す（理由の文はこれを見て正確に書く）。
+    session_summary = _collect_session_summary(codex_home, now=now, window_days=RECENT_DAYS)
+    read_count = session_summary["read_count"]
+    unreadable_count = session_summary["unreadable_count"]
+    logs_measured = read_count > 0
+
+    facts["F11"] = {
+        "measured": logs_measured,
+        "pass": session_summary["mcp_used_recent"] if logs_measured else None,
+        "read_session_count": read_count,
+        "unreadable_session_count": unreadable_count,
+    }
 
     facts["D4"] = {"measured": False, "pass": None}
-    facts["D5"] = {"measured": False, "pass": None}
-
-    facts["S2"] = {"measured": False, "pass": None}
+    facts["D5"] = {
+        "measured": logs_measured,
+        "pass": (session_summary["max_consecutive"] >= 20) if logs_measured else None,
+        "max_consecutive": session_summary["max_consecutive"],
+        "threshold": 20,
+        "read_session_count": read_count,
+        "unreadable_session_count": unreadable_count,
+    }
 
     approval = _approval_and_sandbox(codex_home)
     policy = approval["approval_policy"]
     sandbox = approval["sandbox_mode"]
-    has_approval_signal = policy is not None or sandbox is not None
+    default_permission = _normalize_permission_profile(approval["default_permissions"])
+    is_builtin_permission = default_permission in _BUILTIN_PERMISSION_PROFILES
+    custom_permission_profile = default_permission if (default_permission and not is_builtin_permission) else None
 
-    is_full_access = (sandbox or "").strip().lower() == "danger-full-access"
+    secret_rule_count = secret_file_deny_rule_count(codex_home, custom_permission_profile)
+    s2_measured = custom_permission_profile is not None
+    facts["S2"] = {
+        "measured": s2_measured,
+        "pass": (secret_rule_count > 0) if s2_measured else None,
+        "rule_count": secret_rule_count,
+    }
+
+    has_approval_signal = (
+        policy is not None
+        or sandbox is not None
+        or (is_builtin_permission)
+    )
+
+    is_full_access = (sandbox or "").strip().lower() == "danger-full-access" or default_permission == "danger-full-access"
     is_never_ask = (policy or "").strip().lower() == "never"
     is_always_ask = (policy or "").strip().lower() == "untrusted"
 
@@ -241,3 +329,149 @@ def _safe_rglob(d: Path):
         return list(d.rglob("*"))
     except OSError:
         return []
+
+
+# ---------------------------------------------------------------------------
+# 会話の記録（D5・F11）。平文の .jsonl だけ読む。.jsonl.zst（圧縮）はファイル名の
+# 日時だけ読み、本文は読まない（読めなかった件数として数える。推測で埋めない）。
+# ---------------------------------------------------------------------------
+
+
+def _parse_session_filename_dt(name: str) -> Optional[datetime]:
+    m = _ROLLOUT_NAME_RE.search(name)
+    if not m:
+        return None
+    y, mo, d, h, mi, s = (int(x) for x in m.groups())
+    try:
+        return datetime(y, mo, d, h, mi, s, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _session_candidate_files(codex_home: Path) -> list[Path]:
+    """会話の記録らしきファイル（平文・圧縮の両方）を集める。中身は読まない。"""
+    out: list[Path] = []
+    sessions_dir = codex_home / "sessions"
+    if sessions_dir.is_dir():
+        try:
+            out.extend(
+                p for p in sessions_dir.rglob("*")
+                if p.is_file() and (p.name.endswith(".jsonl") or p.name.endswith(".jsonl.zst"))
+            )
+        except OSError:
+            pass
+    archived_dir = codex_home / "archived_sessions"
+    if archived_dir.is_dir():
+        try:
+            out.extend(
+                p for p in archived_dir.iterdir()
+                if p.is_file() and (p.name.endswith(".jsonl") or p.name.endswith(".jsonl.zst"))
+            )
+        except OSError:
+            pass
+    return out
+
+
+def _parse_entry_ts(value) -> Optional[datetime]:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        v = value.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(v)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        return None
+
+
+def _is_human_message(payload: dict) -> bool:
+    """`response_item` が人（本人）の発言の行か（role が user の message）。"""
+    return payload.get("type") == "message" and payload.get("role") == "user"
+
+
+def scan_codex_session_file(path: Path, now: Optional[datetime], window_days: int,
+                             max_bytes: int = 200 * 1024 * 1024) -> Optional[dict]:
+    """1件の平文の会話の記録（.jsonl）を1行ずつ読み、D5・F11に使う統計だけ返す。
+
+    本文・名前は保持しない。読めなければ None（呼び出す側が「読めなかった」扱いにする）。
+    """
+    try:
+        if not path.is_file():
+            return None
+    except OSError:
+        return None
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=window_days)
+    consecutive = 0
+    max_consecutive = 0
+    mcp_used_recent = False
+
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict) or entry.get("type") != "response_item":
+                    continue
+                payload = entry.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                if _is_human_message(payload):
+                    consecutive = 0
+                    continue
+                if payload.get("type") not in _TOOL_CALL_SUBTYPES:
+                    continue
+                consecutive += 1
+                if consecutive > max_consecutive:
+                    max_consecutive = consecutive
+                namespace = payload.get("namespace")
+                if isinstance(namespace, str) and namespace.startswith("mcp__"):
+                    ts = _parse_entry_ts(entry.get("timestamp"))
+                    if ts is not None and ts >= cutoff:
+                        mcp_used_recent = True
+    except OSError:
+        return None
+
+    return {"max_consecutive": max_consecutive, "mcp_used_recent": mcp_used_recent}
+
+
+def _collect_session_summary(codex_home: Path, now: Optional[datetime], window_days: int) -> dict:
+    """直近 window_days 日ぶんの会話の記録を集計する（読めた分だけ判定に使う）。"""
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=window_days)
+
+    read_count = 0
+    unreadable_count = 0
+    max_consecutive = 0
+    mcp_used_recent = False
+
+    for p in _session_candidate_files(codex_home):
+        dt = _parse_session_filename_dt(p.name)
+        if dt is None or dt < cutoff:
+            continue
+        if p.name.endswith(".jsonl.zst"):
+            unreadable_count += 1
+            continue
+        stats = scan_codex_session_file(p, now=now, window_days=window_days)
+        if stats is None:
+            unreadable_count += 1
+            continue
+        read_count += 1
+        if stats["max_consecutive"] > max_consecutive:
+            max_consecutive = stats["max_consecutive"]
+        if stats["mcp_used_recent"]:
+            mcp_used_recent = True
+
+    return {
+        "read_count": read_count,
+        "unreadable_count": unreadable_count,
+        "max_consecutive": max_consecutive,
+        "mcp_used_recent": mcp_used_recent,
+    }
