@@ -192,13 +192,16 @@ class NastyEnvironmentTest(unittest.TestCase):
     def tearDownClass(cls):
         cls._td.cleanup()
 
-    def test_schema_version_is_3_and_every_item_has_reason(self):
+    def test_schema_version_is_4_and_every_item_has_reason(self):
         for key, res in self.results.items():
             with self.subTest(run=key):
-                self.assertEqual(res["schema_version"], 3)
+                self.assertEqual(res["schema_version"], 4)
                 self.assertEqual(len(res["items"]), 23)
                 for iid, item in res["items"].items():
-                    self.assertEqual(set(item), {"name", "pillar", "judge", "judge_label", "status", "reason", "facts"})
+                    self.assertEqual(
+                        set(item),
+                        {"name", "pillar", "judge", "judge_label", "status", "reason", "facts", "usage_tier"},
+                    )
 
     def test_reasons_and_facts_have_no_forbidden_or_names(self):
         for key, res in self.results.items():

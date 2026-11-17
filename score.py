@@ -19,9 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inventory as inventory_mod  # noqa: E402
 import reasons  # noqa: E402
 
-RESULT_SCHEMA_VERSION = 3
-# facts.json の版。項目ごとの理由に使う数（件数・行数など）が入っているのは 3 から
-SUPPORTED_FACTS_VERSIONS = (3,)
+RESULT_SCHEMA_VERSION = 4
+# facts.json の版。項目ごとの理由に使う数（件数・行数など）が入っているのは 3 から。
+# 4 から、今月の使用量（usage_this_month）とスキル・エージェントの本数（tool_counts）が入る
+SUPPORTED_FACTS_VERSIONS = (4,)
 
 
 JUDGE_LABELS = {
@@ -95,7 +96,57 @@ def _merge_tools(merge_policy: str, tool_results: dict[str, dict]) -> dict:
     return {"measured": True, "pass": passed}
 
 
-def score_item(item_def: dict, item_facts: dict, ai_judgments: dict) -> dict:
+# F6・F9・F11（使われた形跡を回数で見る項目）が、回数をどの facts のキーから取るか。
+USAGE_TIER_COUNT_KEY = {"F6": "use_total", "F9": "use_total", "F11": "calls_30d"}
+
+
+def _usage_tier_for_count(boundaries: list[dict], count: int) -> dict:
+    """items.json の usage_tier_boundaries から、回数に応じた段階を1つ選ぶ（境目は items.json 側）。"""
+    for b in boundaries:
+        if b.get("max_count") is None or count <= b["max_count"]:
+            return {
+                "count": count,
+                "credit_num": b["credit_num"],
+                "credit_den": b["credit_den"],
+                "credit": b["credit_num"] / b["credit_den"],
+                "label": b["label"],
+            }
+    last = boundaries[-1]
+    return {
+        "count": count,
+        "credit_num": last["credit_num"],
+        "credit_den": last["credit_den"],
+        "credit": last["credit_num"] / last["credit_den"],
+        "label": last["label"],
+    }
+
+
+def compute_usage_tier(item_def: dict, item_facts: dict, boundaries: list[dict] | None) -> dict | None:
+    """F6・F9・F11 の段階評価。複数の道具が測れたときは、回数を道具間で合計してから段階を決める
+
+    （5-2 の「あることを見る項目」の「どれかが満たせば」という発想を、回数の合算という形で
+    引き継いだもの。SPEC 5-10 参照）。測れた道具が無ければ None（点数には使わない）。
+    """
+    if not item_def.get("usage_tiered") or not boundaries:
+        return None
+    count_key = USAGE_TIER_COUNT_KEY.get(item_def["id"])
+    if not count_key:
+        return None
+    per_tool = item_facts.get("per_tool", {})
+    total = 0
+    any_measured = False
+    for v in per_tool.values():
+        if isinstance(v, dict) and v.get("measured"):
+            any_measured = True
+            total += int(v.get(count_key, 0) or 0)
+    if not any_measured:
+        return None
+    return _usage_tier_for_count(boundaries, total)
+
+
+def score_item(
+    item_def: dict, item_facts: dict, ai_judgments: dict, usage_tier_boundaries: list[dict] | None = None
+) -> dict:
     iid = item_def["id"]
     judge = item_def["judge"]
     pillar = item_def["pillar"]
@@ -133,16 +184,24 @@ def score_item(item_def: dict, item_facts: dict, ai_judgments: dict) -> dict:
     for tool, v in per_tool.items():
         tool_results[tool] = _resolve_tool_result(iid, judge, tool, v, ai_judgments)
     merged = _merge_tools(merge_policy, tool_results)
-    return _finalize(iid, pillar, judge, merged["measured"], merged["pass"], tool_results)
+    usage_tier = compute_usage_tier(item_def, item_facts, usage_tier_boundaries)
+    return _finalize(iid, pillar, judge, merged["measured"], merged["pass"], tool_results, usage_tier)
 
 
-def _finalize(iid, pillar, judge, measured, passed, per_tool_detail) -> dict:
+def _finalize(iid, pillar, judge, measured, passed, per_tool_detail, usage_tier=None) -> dict:
     if not measured:
         status = "unmeasured"
     elif passed:
         status = "pass"
     else:
         status = "fail"
+    # 柱の達成率（rate）に使う部分点。段階評価がある項目はその部分点、無い項目は○＝1／×＝0（5-10）。
+    if not measured:
+        credit = None
+    elif usage_tier is not None:
+        credit = usage_tier["credit"]
+    else:
+        credit = 1.0 if passed else 0.0
     return {
         "id": iid,
         "pillar": pillar,
@@ -150,6 +209,8 @@ def _finalize(iid, pillar, judge, measured, passed, per_tool_detail) -> dict:
         "judge_label": JUDGE_LABELS[judge],
         "status": status,
         "per_tool": per_tool_detail,
+        "usage_tier": usage_tier,
+        "credit": credit,
     }
 
 
@@ -158,12 +219,20 @@ def round_half_up(x: float) -> int:
 
 
 def compute_pillar_summary(scored_items: list[dict], pillars: dict, pillar_order: list[str]) -> dict:
+    """柱ごとの集計。
+
+    `passed_count`（満たした数）は従来通り ○ の数。`rate`（達成率）は、段階評価のある項目
+    （F6・F9・F11）では部分点（`credit`）を足して計算する（SPEC 5-10）。段階評価の無い項目は
+    ○＝1／×＝0 なので、全項目が段階評価の無い柱では rate は passed_count/judged_count と一致する
+    （後方互換）。
+    """
     summary = {}
     for pid in pillar_order:
         items_in = [s for s in scored_items if s["pillar"] == pid]
         judged = [s for s in items_in if s["status"] != "unmeasured"]
         passed = [s for s in judged if s["status"] == "pass"]
-        rate = (len(passed) / len(judged)) if judged else None
+        credit_sum = sum(s["credit"] for s in judged if s["credit"] is not None)
+        rate = (credit_sum / len(judged)) if judged else None
         summary[pid] = {
             "name": pillars[pid],
             "judged_count": len(judged),
@@ -251,12 +320,13 @@ def main() -> int:
     items_def_by_id = {it["id"]: it for it in items_def["items"]}
     pillars = facts["pillars"]
     pillar_order = facts["pillar_order"]
+    usage_tier_boundaries = items_def.get("usage_tier_boundaries")
 
     scored_items = []
     for item_def in items_def["items"]:
         iid = item_def["id"]
         item_facts = facts["items"].get(iid, {})
-        scored_items.append(score_item(item_def, item_facts, ai_judgments))
+        scored_items.append(score_item(item_def, item_facts, ai_judgments, usage_tier_boundaries))
 
     pillar_summary = compute_pillar_summary(scored_items, pillars, pillar_order)
     score, judged_total = compute_score(pillar_summary)
@@ -280,6 +350,8 @@ def main() -> int:
             "status": s["status"],
             "reason": reason,
             "facts": reason_facts,
+            # v4。段階評価のある項目（F6・F9・F11）だけ値を持つ。無い項目は null（5-10）
+            "usage_tier": s["usage_tier"],
         }
 
     result = {
@@ -295,6 +367,9 @@ def main() -> int:
         "reference": facts.get("reference", {}),
         "tools_detected": facts.get("tools_detected", {}),
         "window_days": facts.get("window_days", 30),
+        # v4。今月の使用量（時間・トークン）とスキル・エージェントの本数（道具ごと）。5-10
+        "usage_this_month": facts.get("usage_this_month", {}),
+        "tool_counts": facts.get("tool_counts", {}),
     }
 
     # 説明の一覧（5-9）。名前の一覧は手元用の ai_targets.json にだけある。読めなければ説明は全部置き換える

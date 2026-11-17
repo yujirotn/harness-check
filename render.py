@@ -51,12 +51,114 @@ def esc(s) -> str:
     return html.escape(str(s), quote=True)
 
 
+def _format_hours(seconds) -> str:
+    try:
+        return f"{float(seconds) / 3600:.1f}"
+    except (TypeError, ValueError):
+        return "0.0"
+
+
+def _format_compact_number(n) -> str:
+    """大きな数（主にキャッシュのトークン）をカードに収まる長さで出す。
+
+    1億以上は億単位、1万以上は万単位（小数第1位まで）、それ未満は桁区切りの整数。
+    """
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return "0"
+    if n >= 100_000_000:
+        return f"{n / 100_000_000:.1f}億"
+    if n >= 10_000:
+        return f"{n / 10_000:.1f}万"
+    return f"{n:,}"
+
+
+def _render_usage_summary(result: dict) -> str:
+    """点数のすぐ下に出す「今月の使用量」（時間・トークン・本数）。v4。"""
+    usage = result.get("usage_this_month") or {}
+    counts = result.get("tool_counts") or {}
+    if not usage and not counts:
+        return ""
+
+    cc = usage.get("claude_code", {})
+    cx = usage.get("codex", {})
+    combined = usage.get("combined", {})
+    month = usage.get("month")
+
+    def hours_cell(label: str, u: dict) -> str:
+        if not u.get("measured"):
+            return f'<div class="ucard"><div class="ulabel">{esc(label)}</div><div class="uvalue">―</div></div>'
+        return (
+            f'<div class="ucard"><div class="ulabel">{esc(label)}</div>'
+            f'<div class="uvalue">{esc(_format_hours(u.get("active_seconds", 0)))}<span class="uunit">時間</span></div></div>'
+        )
+
+    time_cards = (
+        hours_cell("Claude Code", cc) + hours_cell("Codex", cx)
+        + f'<div class="ucard"><div class="ulabel">合計</div><div class="uvalue">{esc(_format_hours(combined.get("active_seconds", 0)))}<span class="uunit">時間</span></div></div>'
+    )
+
+    def tok_total(t: dict) -> int:
+        return sum(int(t.get(k, 0) or 0) for k in ("input", "output", "cache_read", "cache_write"))
+
+    def token_cell(label: str, u: dict) -> str:
+        if not u.get("measured"):
+            return f'<div class="ucard"><div class="ulabel">{esc(label)}</div><div class="uvalue">―</div></div>'
+        t = u.get("tokens", {})
+        cache = int(t.get("cache_read", 0) or 0) + int(t.get("cache_write", 0) or 0)
+        return (
+            f'<div class="ucard"><div class="ulabel">{esc(label)}</div>'
+            f'<div class="uvalue">{esc(_format_compact_number(tok_total(t)))}<span class="uunit">トークン</span></div>'
+            f'<div class="ubreak">入力{esc(_format_compact_number(t.get("input", 0)))}／'
+            f'出力{esc(_format_compact_number(t.get("output", 0)))}／'
+            f'キャッシュ{esc(_format_compact_number(cache))}</div></div>'
+        )
+
+    token_cards = (
+        token_cell("Claude Code", cc) + token_cell("Codex", cx)
+        + f'<div class="ucard"><div class="ulabel">合計</div>'
+        f'<div class="uvalue">{esc(_format_compact_number(tok_total(combined.get("tokens", {}))))}<span class="uunit">トークン</span></div></div>'
+    )
+
+    cc_counts = counts.get("claude_code", {})
+    cx_counts = counts.get("codex", {})
+    count_cards = (
+        f'<div class="ucard"><div class="ulabel">Claude Code</div>'
+        f'<div class="uvalue">{esc(cc_counts.get("skills", 0))}<span class="uunit">スキル</span></div>'
+        f'<div class="ubreak">エージェント{esc(cc_counts.get("agents", 0))}体</div></div>'
+        f'<div class="ucard"><div class="ulabel">Codex</div>'
+        f'<div class="uvalue">{esc(cx_counts.get("skills", 0))}<span class="uunit">スキル</span></div>'
+        f'<div class="ubreak">エージェント{esc(cx_counts.get("agents", 0))}体</div></div>'
+    )
+
+    unreadable = cx.get("unreadable_session_count", 0)
+    unreadable_note = (
+        f'<p class="unote">Codexは会話の記録のうち{esc(unreadable)}件が圧縮されていて読めず、トークン・時間に含めていない。</p>'
+        if unreadable
+        else ""
+    )
+
+    month_label = f"（{esc(month)}）" if month else ""
+    return f"""<div class="usage-summary">
+  <h4>今月使った時間・トークン{month_label}</h4>
+  <div class="ugrid">{time_cards}</div>
+  <h4>今月使ったトークン</h4>
+  <div class="ugrid">{token_cards}</div>
+  <h4>自分で用意したスキル・エージェントの本数</h4>
+  <div class="ugrid">{count_cards}</div>
+  <p class="unote">時間は、会話の記録の時刻の間隔が5分以内の連続を「使っていた時間」として足したもの（5分を超えた空きは数えない）。合計は2つの道具の値を単純に足したもの（同時に両方使っていれば重複する）。</p>
+  {unreadable_note}
+</div>"""
+
+
 def render_cover(result: dict) -> str:
     score = result.get("score")
     score_display = esc(score) if score is not None else "―"
     type_name = esc(result.get("type_name", ""))
     judged = result.get("judged_item_count", 0)
     total = result.get("total_item_count", 0)
+    usage_summary_html = _render_usage_summary(result)
 
     pillar_rows = []
     for pid in result["pillar_order"]:
@@ -93,6 +195,7 @@ def render_cover(result: dict) -> str:
     <div class="typebox"><div class="now">{type_name}</div>
       <div class="judged">全{esc(total)}項目中{esc(judged)}項目を判定</div></div>
   </div>
+  {usage_summary_html}
 </div>
 <h2 class="first">柱ごとの結果</h2>
 <table class="pillars"><tbody>
@@ -118,11 +221,21 @@ def render_pillar_pages(result: dict) -> str:
         for iid, item in items:
             status = item["status"]
             reason = item.get("reason")
+            tier = item.get("usage_tier")
+            tier_suffix = (
+                f'　（直近30日は{esc(tier["count"])}回・段階{esc(tier["label"])}）'
+                if isinstance(tier, dict)
+                else ""
+            )
             # v3 から項目ごとの理由がある。v2 の result.json には無いので、そのときは出さない
             reason_row = (
-                f"""<tr class="reason-row"><td></td><td colspan="3" class="reason">{esc(reason)}</td></tr>"""
+                f"""<tr class="reason-row"><td></td><td colspan="3" class="reason">{esc(reason)}{tier_suffix}</td></tr>"""
                 if isinstance(reason, str) and reason
-                else ""
+                else (
+                    f"""<tr class="reason-row"><td></td><td colspan="3" class="reason">{tier_suffix.lstrip("　")}</td></tr>"""
+                    if tier_suffix
+                    else ""
+                )
             )
             rows.append(
                 f"""<tbody class="item"><tr class="{status}">
@@ -258,6 +371,8 @@ def render_blindspots_page(result: dict) -> str:
 <li>この点検で検出した道具: {tools_line}。</li>
 <li>キーの走査の限界: よくある形のキー（sk-・AIza等）と、設定ファイルの中の名前でわかるもの（token・secret等）だけを探している。1MBを超えるファイルと、Gitの対象外のファイル（.env等）は見ていない。</li>
 <li>小文字だけの値や、小文字・数字・ハイフンだけの値は、名前や見本とみなして数えない。</li>
+<li>今月の使用時間の合計は、Claude Code と Codex の値を単純に足したもの。同時に両方を使っていた時間があれば、その分は重複して数えている。</li>
+<li>Codex のトークンは、会話の記録が圧縮されていて読めない分は足していない（推測で埋めていない）。</li>
 </ul>
 <h3>今回「測定できず」だった項目</h3>
 <ul class="blindspots">

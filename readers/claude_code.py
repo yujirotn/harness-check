@@ -415,6 +415,8 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
     skill_counts: dict[str, int] = {}
     agent_counts: dict[str, int] = {}
     connector_counts: dict[str, int] = {}
+    month_timestamps: list[float] = []
+    month_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
 
     for f in sessions:
         stats = common.scan_claude_jsonl(
@@ -444,6 +446,9 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
         if stats.distinct_agent_names_between_humans_2plus:
             any_two_agents_between_humans = True
             d4_hit_sessions += 1
+        month_timestamps.extend(stats.month_timestamps)
+        for k in month_tokens:
+            month_tokens[k] += stats.month_tokens.get(k, 0)
 
     facts["F6"] = {
         "measured": facts["F5"]["pass"] and len(sessions) > 0,
@@ -566,6 +571,14 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
     facts["_has_scheduled_defs"] = len(sched_dirs) > 0
     facts["_stop_hook_count"] = stop_hook_count(perms)
     facts["_scheduled_def_count"] = len(sched_dirs)
+
+    # 今月の使用量（時間・トークン。5-10）。道具の検出自体は collect.py 側（detect_claude_code）で
+    # 判定済みなので、ここでは「セッションが1件以上読めたか」を measured の根拠にする。
+    facts["_usage_this_month"] = {
+        "measured": True,
+        "active_seconds": common.compute_active_seconds(month_timestamps),
+        "tokens": month_tokens,
+    }
 
     return facts
 

@@ -1,4 +1,4 @@
-# result.json の形（schema_version 3）
+# result.json の形（schema_version 4）
 
 このファイルが `result.json` の形の正本です。受け取る側（ひな形・受付・管理画面）は、このファイルだけを見て実装できるように書いています。
 
@@ -10,7 +10,7 @@
 
 ```jsonc
 {
-  "schema_version": 3,       // 3 から items の各項目に reason・facts が付いた
+  "schema_version": 4,       // 3 から items の各項目に reason・facts が付いた。4 から usage_this_month・tool_counts・items.<ID>.usage_tier が付いた
   "score": 72,                // 100点満点。四捨五入済み。判定できた項目が0件なら null
   "judged_item_count": 18,    // 判定できた項目の数（23項目中）
   "total_item_count": 23,
@@ -41,7 +41,16 @@
       "facts": [
         { "label": "指示書の数", "value": "1件" },
         { "label": "基準", "value": "1件以上" }
-      ]
+      ],
+      "usage_tier": null             // v4。F6・F9・F11 以外は常に null
+    },
+    "F6": {
+      "...": "他の項目と同じ形",
+      "usage_tier": {                // v4。F6・F9・F11 だけ値を持つ（直近30日の使用回数の段階。15章）
+        "count": 41,                 // 複数の道具が測れたときは回数を合計したもの
+        "credit_num": 3, "credit_den": 3,   // 0/3・1/3・2/3・3/3 のどれか（分母は常に3）
+        "label": "満点"               // "0" | "1/3" | "2/3" | "満点"
+      }
     }
     // ... 23項目分。ひな形側は ID の番号順（F1, F2, ..., F10, F11）に並べ替えて表示する
   },
@@ -96,6 +105,33 @@
 
   "tools_detected": { "claude_code": true, "codex": false },
   "window_days": 30,
+
+  // v4。今月の使用量（時間・トークン）。表紙の点数のすぐ下に出す（15章）
+  "usage_this_month": {
+    "month": "2026-11",            // 日本時間の暦月のラベル。日付のみ（固有名ではない）
+    "claude_code": {
+      "measured": true,
+      "active_seconds": 44280,     // 記録の時刻の間隔が5分以内の連続を足したもの
+      "tokens": { "input": 120000, "output": 30000, "cache_read": 900000, "cache_write": 50000 }
+    },
+    "codex": {
+      "measured": true,
+      "active_seconds": 3600,
+      "tokens": { "input": 20000, "output": 4000, "cache_read": 10000, "cache_write": 0 },
+      "unreadable_session_count": 12   // 今月分のうち、圧縮されていて読めなかった件数。トークン・時間には含めない
+    },
+    "combined": {                   // 2つの道具の値を単純に足したもの（重複しうる。15章）
+      "active_seconds": 47880,
+      "tokens": { "input": 140000, "output": 34000, "cache_read": 910000, "cache_write": 50000 }
+    }
+  },
+
+  // v4。自分で用意したスキル・エージェントの本数（道具ごと）。名前は入らない
+  "tool_counts": {
+    "claude_code": { "skills": 12, "agents": 4 },
+    "codex": { "skills": 1, "agents": 0 },
+    "combined": { "skills": 13, "agents": 4 }
+  },
 
   // v3。スキル・エージェント・コネクタの「説明の一覧」（名前は入らない）
   "inventory": {
@@ -176,18 +212,19 @@
   - 社名・人名らしい印（`propernoun.py`）: 株式会社・有限会社・合同会社・(株)・(有)・御中、固有の語の後ろの工務店・ホーム・ハウス・建設・不動産・事務所・商事・商店（「ホームページ」「ハウスメーカー」「建設業」「地域の工務店」「設計事務所」のような一般の言い方は通す）、漢字・カタカナの名前の後ろのさん・様・氏・くん・ちゃん・部長・課長・社長・店長（「お客様」「担当者様」「皆様」「社長向け」「営業部長」は通す）
 - **説明の中の社名や人名は、機械では見つけきれません。** 印の付かない固有名詞（「田中の週報」、カタカナだけの社名・商品名、地名や案件名）は通ってしまうので、送るスキル（sho-san-share）の下見で説明の一覧を本人に全部見せ、目を通してもらってから送ります。
 
-## v2 との違い
+## v2・v3・v4 の違い
 
-| | v2 | v3 |
-|---|---|---|
-| `schema_version` | 2 | 3 |
-| `items.<ID>` のキー | `name`・`pillar`・`judge`・`judge_label`・`status` | 左の5つ＋`reason`・`facts` |
-| 一番上 | — | `inventory` が増える |
-| `reference` | — | `inventory_truncated`・`inventory_summaries_replaced` が増える（名前なし・名前つきとも）。名前つき（`names_included: true`）のときだけ `named` があるのは v2 と同じ |
-| `pillars`・`next_fixes` | — | 変わらない |
+| | v2 | v3 | v4 |
+|---|---|---|---|
+| `schema_version` | 2 | 3 | 4 |
+| `items.<ID>` のキー | `name`・`pillar`・`judge`・`judge_label`・`status` | 左の5つ＋`reason`・`facts` | 左の7つ＋`usage_tier`（F6・F9・F11以外はnull） |
+| 一番上 | — | `inventory` が増える | `usage_this_month`・`tool_counts` が増える |
+| `reference` | — | `inventory_truncated`・`inventory_summaries_replaced` が増える（名前なし・名前つきとも）。名前つき（`names_included: true`）のときだけ `named` があるのは v2 と同じ | 変わらない |
+| `pillars`・`next_fixes` | — | 変わらない | 変わらない（キーの形は同じ。`pillars.<p>.rate` の**計算の仕方**だけが変わる。15章・5-10） |
 
-- 読む側は `schema_version` で分ける。v2 には `reason`・`facts` が無い。`render.py` は v2 の `result.json` もそのまま読める（理由の行を出さないだけ）。
-- `score.py` は v3 の `facts.json`（`collect.py` が出すもの）しか受け付けない。古い `facts.json` を渡すと止まるので、`collect.py` からやり直す。
+- 読む側は `schema_version` で分ける。v2 には `reason`・`facts` が無く、v2・v3 には `usage_tier`・`usage_this_month`・`tool_counts` が無い。`render.py` はどの版の `result.json` もそのまま読める（新しい版のキーが無ければ、その枠を出さないだけ）。
+- `score.py` は v4 の `facts.json`（`collect.py` が出すもの）しか受け付けない。古い `facts.json` を渡すと止まるので、`collect.py` からやり直す。
+- v4で`pillars.<p>.rate`の**計算の仕方**が変わった点に注意: v3までは「○の数÷判定できた数」。v4は、段階評価のある項目（F6・F9・F11）がある柱では「部分点の合計÷判定できた数」。段階評価の無い柱（安全・育つ仕組み・任せ方）は、○＝1／×＝0のままなので計算結果は変わらない。
 
 ## 守っていること
 
@@ -196,6 +233,7 @@
 - `status` は3値のみ（`pass` / `fail` / `unmeasured`）。`unmeasured` は点数の分母から外れている。
 - 柱の `rate` が `null` の柱は、点数の平均から除外されている（`score.py` 側で処理済み）。
 - キーの走査は `repo`（リポジトリの中）と `config`（設定ファイルの中）を分けて持つ。値そのものは入らない。
+- `usage_this_month`・`tool_counts`・`usage_tier` に入るのは数（秒・トークン・本数・回数・段階）だけ。名前・場所は入らない（v4）。
 
 ## ひな形を差し替えるときの注意
 

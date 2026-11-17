@@ -549,6 +549,11 @@ class ConversationStats:
     skill_use_counts: dict = field(default_factory=dict)
     agent_use_counts: dict = field(default_factory=dict)
     connector_use_counts: dict = field(default_factory=dict)
+    # 今月の使用量（5-10）。時刻は「今の状態」の計算用だけに使い、外には出さない（本文・名前は持たない）。
+    month_timestamps: list = field(default_factory=list)
+    month_tokens: dict = field(
+        default_factory=lambda: {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+    )
 
 
 def connector_name_from_tool(tool_name: str) -> Optional[str]:
@@ -599,6 +604,7 @@ def scan_claude_jsonl(
 
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
+    month_start = month_start_jst(now)
     skill_set = set(known_skill_names)
     agent_set = set(known_agent_names)
 
@@ -624,6 +630,9 @@ def scan_claude_jsonl(
                 entry_dt = _parse_ts(ts)
                 if entry_dt is not None and entry_dt >= cutoff:
                     touched_recent = True
+                in_month = entry_dt is not None and month_start <= entry_dt <= now
+                if in_month:
+                    stats.month_timestamps.append(entry_dt.timestamp())
 
                 etype = entry.get("type")
                 if etype == "user":
@@ -640,6 +649,13 @@ def scan_claude_jsonl(
                 message = entry.get("message")
                 if not isinstance(message, dict):
                     continue
+                if in_month:
+                    usage = message.get("usage")
+                    if isinstance(usage, dict):
+                        stats.month_tokens["input"] += usage_num(usage, "input_tokens")
+                        stats.month_tokens["output"] += usage_num(usage, "output_tokens")
+                        stats.month_tokens["cache_write"] += usage_num(usage, "cache_creation_input_tokens")
+                        stats.month_tokens["cache_read"] += usage_num(usage, "cache_read_input_tokens")
                 content = message.get("content")
                 if not isinstance(content, list):
                     continue
@@ -710,6 +726,56 @@ def _parse_ts(value) -> Optional[datetime]:
         return dt
     except ValueError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# 今月の使用量（時間・トークン）。5-10（使用時間とトークンの数え方）。
+# ---------------------------------------------------------------------------
+
+JST = timezone(timedelta(hours=9))
+
+# 時間の数え方（5-10）: 記録の時刻の間隔がこの秒数以内の連続を「使っていた時間」として足す。
+ACTIVE_GAP_SECONDS = 5 * 60
+
+
+def month_start_jst(now: datetime) -> datetime:
+    """「今月」の開始（日本時間の暦月の1日0時）を、比較用に UTC 側の aware datetime で返す。"""
+    now_jst = now.astimezone(JST)
+    start_jst = now_jst.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return start_jst.astimezone(timezone.utc)
+
+
+def month_label_jst(now: datetime) -> str:
+    """「今月」のラベル（例: "2026-11"）。日付のみで、本文・名前は含まない。"""
+    now_jst = now.astimezone(JST)
+    return f"{now_jst.year:04d}-{now_jst.month:02d}"
+
+
+def compute_active_seconds(epoch_seconds: Iterable[float], gap_seconds: int = ACTIVE_GAP_SECONDS) -> int:
+    """時刻の列（epoch秒）から「使っていた時間」を数える（5-10）。
+
+    並べ替えた上で、隣り合う記録の間隔が gap_seconds 以内の分だけを足す。
+    間隔が gap_seconds を超えた空きは数えない（セッションをまたいでも同じ規則）。
+    """
+    ts = sorted(float(t) for t in epoch_seconds)
+    total = 0.0
+    for a, b in zip(ts, ts[1:]):
+        delta = b - a
+        if 0 <= delta <= gap_seconds:
+            total += delta
+    return int(round(total))
+
+
+def usage_num(d: dict, key: str) -> int:
+    """トークンの数などの整数値だけを安全に取り出す（文字列・None・真偽値は0扱い）。"""
+    if not isinstance(d, dict):
+        return 0
+    v = d.get(key)
+    if isinstance(v, bool):
+        return 0
+    if isinstance(v, (int, float)):
+        return int(v)
+    return 0
 
 
 def mtime_within_days(path: Path, days: int, now: Optional[datetime] = None) -> bool:

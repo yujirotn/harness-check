@@ -24,7 +24,7 @@ from readers import claude_code  # noqa: E402
 from readers import codex  # noqa: E402
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 RECENT_DAYS = 30
 
 
@@ -353,6 +353,60 @@ def build_reference(cc_facts: dict, codex_facts: dict, s1: dict, show_names: boo
     return reference
 
 
+def _empty_usage() -> dict:
+    return {"measured": False, "active_seconds": 0, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}}
+
+
+def build_usage_this_month(cc_detected: bool, codex_detected: bool, cc_facts: dict, codex_facts: dict, now) -> dict:
+    """今月の使用量（時間・トークン。5-10）。Claude Code と Codex を分けて出し、合計も出す。
+
+    合計は2つの道具の値を単純に足したもの（同時に両方を使っていた時間があれば、その分は
+    重複して数えられる。レポートの「この点検が見ていないもの」に明記する）。
+    """
+    cc_usage = cc_facts.get("_usage_this_month") if cc_detected else None
+    codex_usage = codex_facts.get("_usage_this_month") if codex_detected else None
+    cc_usage = cc_usage if isinstance(cc_usage, dict) else _empty_usage()
+    codex_usage = codex_usage if isinstance(codex_usage, dict) else _empty_usage()
+
+    combined_tokens = {
+        k: cc_usage["tokens"].get(k, 0) + codex_usage["tokens"].get(k, 0)
+        for k in ("input", "output", "cache_read", "cache_write")
+    }
+    combined_seconds = cc_usage.get("active_seconds", 0) + codex_usage.get("active_seconds", 0)
+
+    return {
+        "month": common.month_label_jst(now),
+        "claude_code": {
+            "measured": bool(cc_detected and cc_usage.get("measured")),
+            "active_seconds": cc_usage.get("active_seconds", 0),
+            "tokens": cc_usage.get("tokens", {}),
+        },
+        "codex": {
+            "measured": bool(codex_detected and codex_usage.get("measured")),
+            "active_seconds": codex_usage.get("active_seconds", 0),
+            "tokens": codex_usage.get("tokens", {}),
+            "unreadable_session_count": codex_usage.get("unreadable_session_count", 0),
+        },
+        "combined": {
+            "active_seconds": combined_seconds,
+            "tokens": combined_tokens,
+        },
+    }
+
+
+def build_tool_counts(cc_detected: bool, codex_detected: bool, cc_facts: dict, codex_facts: dict) -> dict:
+    """スキル・エージェントの本数（道具ごと）。"""
+    cc_skills = _safe_get(cc_facts, "F5", "count", default=0) if cc_detected else 0
+    cc_agents = _safe_get(cc_facts, "F8", "count", default=0) if cc_detected else 0
+    codex_skills = _safe_get(codex_facts, "F5", "count", default=0) if codex_detected else 0
+    codex_agents = _safe_get(codex_facts, "F8", "count", default=0) if codex_detected else 0
+    return {
+        "claude_code": {"skills": cc_skills, "agents": cc_agents},
+        "codex": {"skills": codex_skills, "agents": codex_agents},
+        "combined": {"skills": cc_skills + codex_skills, "agents": cc_agents + codex_agents},
+    }
+
+
 def build_inventory_skeleton(
     workdir: Path, claude_home: Path, codex_home: Path, home: Path,
     cc_detected: bool, codex_detected: bool, cc_facts: dict, codex_facts: dict,
@@ -553,6 +607,8 @@ def main() -> int:
     inv_skeleton, inv_targets = build_inventory_skeleton(
         workdir, claude_home, codex_home, home, cc_detected, codex_detected, cc_facts, codex_facts
     )
+    usage_this_month = build_usage_this_month(cc_detected, codex_detected, cc_facts, codex_facts, now)
+    tool_counts = build_tool_counts(cc_detected, codex_detected, cc_facts, codex_facts)
 
     facts = {
         "schema_version": SCHEMA_VERSION,
@@ -564,6 +620,9 @@ def main() -> int:
         "reference": reference,
         # 説明の一覧の下ごしらえ（id と回数だけ。名前は ai_targets.json の側にだけ置く）
         "inventory": inv_skeleton,
+        # v4。今月の使用量（時間・トークン）とスキル・エージェントの本数（道具ごと）。5-10
+        "usage_this_month": usage_this_month,
+        "tool_counts": tool_counts,
     }
 
     ai_targets = build_ai_targets(

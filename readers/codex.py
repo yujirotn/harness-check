@@ -315,6 +315,7 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
     facts["F11"] = {
         "measured": logs_measured,
         "pass": session_summary["mcp_used_recent"] if logs_measured else None,
+        "calls_30d": session_summary.get("mcp_calls_recent", 0),
         "read_session_count": read_count,
         "unreadable_session_count": unreadable_count,
     }
@@ -422,6 +423,9 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
     facts["_stop_hook_count"] = 1 if stop_hook else 0
     facts["_scheduled_def_count"] = len(autos)
 
+    # 今月の使用量（時間・トークン。5-10）。
+    facts["_usage_this_month"] = _collect_month_usage(codex_home, now=now)
+
     return facts
 
 
@@ -499,9 +503,11 @@ def _is_human_message(payload: dict) -> bool:
 
 
 def scan_codex_session_file(path: Path, now: Optional[datetime], window_days: int) -> Optional[dict]:
-    """1件の平文の会話の記録（.jsonl）を1行ずつ読み、D5・F11に使う統計だけ返す。
+    """1件の平文の会話の記録（.jsonl）を1行ずつ読み、D5・F11・今月の使用量の統計だけ返す。
 
     本文・名前は保持しない。読めなければ None（呼び出す側が「読めなかった」扱いにする）。
+    今月の使用量（時間・トークン。5-10）は、会話の記録の種類を問わず全行の時刻と、
+    `token_usage_record` の中の数値（`payload.usage`）を見る。
     """
     try:
         if not path.is_file():
@@ -511,9 +517,13 @@ def scan_codex_session_file(path: Path, now: Optional[datetime], window_days: in
 
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
+    month_start = common.month_start_jst(now)
     consecutive = 0
     max_consecutive = 0
     mcp_used_recent = False
+    mcp_calls_recent = 0
+    month_timestamps: list = []
+    month_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
 
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
@@ -525,7 +535,24 @@ def scan_codex_session_file(path: Path, now: Optional[datetime], window_days: in
                     entry = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if not isinstance(entry, dict) or entry.get("type") != "response_item":
+                if not isinstance(entry, dict):
+                    continue
+
+                ts = _parse_entry_ts(entry.get("timestamp"))
+                if ts is not None and month_start <= ts <= now:
+                    month_timestamps.append(ts.timestamp())
+
+                if entry.get("type") == "token_usage_record" and ts is not None and month_start <= ts <= now:
+                    usage = entry.get("payload", {}).get("usage") if isinstance(entry.get("payload"), dict) else None
+                    if isinstance(usage, dict):
+                        month_tokens["input"] += common.usage_num(usage, "input_tokens")
+                        month_tokens["output"] += common.usage_num(usage, "output_tokens") + common.usage_num(
+                            usage, "reasoning_output_tokens"
+                        )
+                        month_tokens["cache_read"] += common.usage_num(usage, "cached_input_tokens")
+                        month_tokens["cache_write"] += common.usage_num(usage, "cache_write_input_tokens")
+
+                if entry.get("type") != "response_item":
                     continue
                 payload = entry.get("payload")
                 if not isinstance(payload, dict):
@@ -543,13 +570,20 @@ def scan_codex_session_file(path: Path, now: Optional[datetime], window_days: in
                     payload.get("type") == "mcp_tool_call"
                 )
                 if is_mcp_call:
-                    ts = _parse_entry_ts(entry.get("timestamp"))
-                    if ts is not None and ts >= cutoff:
+                    entry_ts = _parse_entry_ts(entry.get("timestamp"))
+                    if entry_ts is not None and entry_ts >= cutoff:
                         mcp_used_recent = True
+                        mcp_calls_recent += 1
     except OSError:
         return None
 
-    return {"max_consecutive": max_consecutive, "mcp_used_recent": mcp_used_recent}
+    return {
+        "max_consecutive": max_consecutive,
+        "mcp_used_recent": mcp_used_recent,
+        "mcp_calls_recent": mcp_calls_recent,
+        "month_timestamps": month_timestamps,
+        "month_tokens": month_tokens,
+    }
 
 
 def _collect_session_summary(codex_home: Path, now: Optional[datetime], window_days: int) -> dict:
@@ -561,6 +595,7 @@ def _collect_session_summary(codex_home: Path, now: Optional[datetime], window_d
     unreadable_count = 0
     max_consecutive = 0
     mcp_used_recent = False
+    mcp_calls_recent = 0
 
     for p in _session_candidate_files(codex_home):
         dt = _parse_session_filename_dt(p.name)
@@ -578,10 +613,53 @@ def _collect_session_summary(codex_home: Path, now: Optional[datetime], window_d
             max_consecutive = stats["max_consecutive"]
         if stats["mcp_used_recent"]:
             mcp_used_recent = True
+        mcp_calls_recent += stats.get("mcp_calls_recent", 0)
 
     return {
         "read_count": read_count,
         "unreadable_count": unreadable_count,
         "max_consecutive": max_consecutive,
         "mcp_used_recent": mcp_used_recent,
+        "mcp_calls_recent": mcp_calls_recent,
+    }
+
+
+def _collect_month_usage(codex_home: Path, now: Optional[datetime]) -> dict:
+    """今月の使用量（時間・トークン。5-10）。平文で読めた記録だけを使う。
+
+    ファイルの選別は「今月の開始の1日前」までを対象にする（セッションの開始がぎりぎり前月でも、
+    中の記録が今月に入っている場合を取りこぼさないための余裕。実際にどの行を数えるかは、
+    行ごとの時刻で判定するので、この余裕自体が数え方に影響しない）。
+    """
+    now = now or datetime.now(timezone.utc)
+    month_start = common.month_start_jst(now)
+    file_cutoff = month_start - timedelta(days=1)
+
+    read_count = 0
+    unreadable_count = 0
+    month_timestamps: list = []
+    month_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+
+    for p in _session_candidate_files(codex_home):
+        dt = _parse_session_filename_dt(p.name)
+        if dt is None or dt < file_cutoff:
+            continue
+        if p.name.endswith(".jsonl.zst"):
+            unreadable_count += 1
+            continue
+        stats = scan_codex_session_file(p, now=now, window_days=30)
+        if stats is None:
+            unreadable_count += 1
+            continue
+        read_count += 1
+        month_timestamps.extend(stats.get("month_timestamps", []))
+        for k in month_tokens:
+            month_tokens[k] += stats.get("month_tokens", {}).get(k, 0)
+
+    return {
+        "measured": read_count > 0 or unreadable_count == 0,
+        "active_seconds": common.compute_active_seconds(month_timestamps),
+        "tokens": month_tokens,
+        "read_session_count": read_count,
+        "unreadable_session_count": unreadable_count,
     }
