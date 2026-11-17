@@ -101,24 +101,23 @@ USAGE_TIER_COUNT_KEY = {"F6": "use_total", "F9": "use_total", "F11": "calls_30d"
 
 
 def _usage_tier_for_count(boundaries: list[dict], count: int) -> dict:
-    """items.json の usage_tier_boundaries から、回数に応じた段階を1つ選ぶ（境目は items.json 側）。"""
+    """items.json の usage_tier_boundaries から、回数に応じた段階を1つ選ぶ（境目は items.json 側）。
+
+    戻り値は `count`・`credit_num`・`credit_den`・`label` の4キーだけ（docs/RESULT_SCHEMA.md の
+    `items.<ID>.usage_tier` の形と完全に一致させる。差し戻し対応: 内部計算用の小数 `credit` は
+    ここに持たせず、使う側（_finalize）で `credit_num/credit_den` から都度計算する）。
+    """
     for b in boundaries:
         if b.get("max_count") is None or count <= b["max_count"]:
-            return {
-                "count": count,
-                "credit_num": b["credit_num"],
-                "credit_den": b["credit_den"],
-                "credit": b["credit_num"] / b["credit_den"],
-                "label": b["label"],
-            }
+            return {"count": count, "credit_num": b["credit_num"], "credit_den": b["credit_den"], "label": b["label"]}
     last = boundaries[-1]
-    return {
-        "count": count,
-        "credit_num": last["credit_num"],
-        "credit_den": last["credit_den"],
-        "credit": last["credit_num"] / last["credit_den"],
-        "label": last["label"],
-    }
+    return {"count": count, "credit_num": last["credit_num"], "credit_den": last["credit_den"], "label": last["label"]}
+
+
+def _usage_tier_credit(usage_tier: dict) -> float:
+    """usage_tier（公開用の4キーの形）から、点数計算用の部分点を計算する。"""
+    den = usage_tier.get("credit_den") or 1
+    return usage_tier.get("credit_num", 0) / den
 
 
 def compute_usage_tier(item_def: dict, item_facts: dict, boundaries: list[dict] | None) -> dict | None:
@@ -199,7 +198,7 @@ def _finalize(iid, pillar, judge, measured, passed, per_tool_detail, usage_tier=
     if not measured:
         credit = None
     elif usage_tier is not None:
-        credit = usage_tier["credit"]
+        credit = _usage_tier_credit(usage_tier)
     else:
         credit = 1.0 if passed else 0.0
     return {

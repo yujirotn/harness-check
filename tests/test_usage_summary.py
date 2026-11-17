@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from readers import common  # noqa: E402
 import score  # noqa: E402
-from helpers import make_git_repo  # noqa: E402
+from helpers import FIXTURES_DIR, TEST_NOW, copy_fixture, make_git_repo  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -388,8 +388,10 @@ class UsageTierBoundaryTest(unittest.TestCase):
             with self.subTest(count=count):
                 tier = score._usage_tier_for_count(self.boundaries, count)
                 self.assertEqual(tier["label"], label)
-                self.assertAlmostEqual(tier["credit"], credit)
+                self.assertAlmostEqual(score._usage_tier_credit(tier), credit)
                 self.assertEqual(tier["count"], count)
+                # 差し戻し対応: usage_tier は公開用の4キーだけ（内部計算用の credit を持たない）
+                self.assertEqual(set(tier), {"count", "credit_num", "credit_den", "label"})
 
     def test_compute_usage_tier_sums_counts_across_measured_tools(self):
         item_def = {"id": "F11", "usage_tiered": True}
@@ -522,6 +524,147 @@ class NamesNotLeakedInUsageFactsTest(unittest.TestCase):
         for key in ("claude_code", "codex"):
             self.assertEqual(set(usage[key]) - {"unreadable_session_count"}, {"measured", "active_seconds", "tokens"})
             self.assertEqual(set(usage[key]["tokens"]), {"input", "output", "cache_read", "cache_write"})
+
+
+# ---------------------------------------------------------------------------
+# docs/RESULT_SCHEMA.md とのキー完全一致（差し戻し対応: usage_tier に内部計算用の
+# credit が漏れて出ていた。受け手は4キー完全一致で検査するため、1キーでも余分や
+# 不足があれば落ちることを、このテストで確かめる）。
+# ---------------------------------------------------------------------------
+
+TOP_LEVEL_KEYS = {
+    "schema_version", "score", "judged_item_count", "total_item_count", "type_name",
+    "pillar_order", "pillars", "items", "next_fixes", "reference", "tools_detected",
+    "window_days", "usage_this_month", "tool_counts", "inventory",
+}
+PILLAR_KEYS = {"name", "judged_count", "total_count", "passed_count", "rate"}
+ITEM_KEYS = {"name", "pillar", "judge", "judge_label", "status", "reason", "facts", "usage_tier"}
+USAGE_TIER_KEYS = {"count", "credit_num", "credit_den", "label"}
+NEXT_FIX_KEYS = {"id", "name", "pillar", "fix_text"}
+REFERENCE_KEYS_UNNAMED = {
+    "names_included", "skills", "agents", "connectors", "max_consecutive_tool_calls",
+    "startup_instructions", "secret_scan", "inventory_truncated", "inventory_summaries_replaced",
+}
+USAGE_THIS_MONTH_TOOL_KEYS = {"measured", "active_seconds", "tokens"}
+TOKENS_KEYS = {"input", "output", "cache_read", "cache_write"}
+TOOL_COUNTS_TOOL_KEYS = {"skills", "agents"}
+INVENTORY_SKILL_KEYS = {"summary", "category", "used_30d"}
+INVENTORY_AGENT_OR_CONNECTOR_KEYS = {"summary", "used_30d"}
+
+
+class ResultSchemaExactKeyMatchTest(unittest.TestCase):
+    """collect.py → score.py を実際に走らせ、result.json の各段のキーが
+    docs/RESULT_SCHEMA.md と完全一致する（多くも少なくもない）ことを確かめる。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._td = tempfile.TemporaryDirectory()
+        tmp_path = Path(cls._td.name)
+
+        workdir = copy_fixture("repo_pass", tmp_path / "workdir")
+        make_git_repo(workdir, with_remote=True, track_all=True)
+        claude_home = copy_fixture("claude_home_pass", tmp_path / "claude_home")
+        codex_home = copy_fixture("codex_home_pass", tmp_path / "codex_home")
+        home = copy_fixture("home_pass", tmp_path / "home")
+
+        out = tmp_path / "out"
+        cmd = [
+            sys.executable, str(REPO_ROOT / "collect.py"),
+            "--workdir", str(workdir), "--out", str(out),
+            "--claude-home", str(claude_home), "--codex-home", str(codex_home),
+            "--home", str(home), "--now", TEST_NOW,
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        # ai_judgments は空のまま（この版のテストはキーの形だけを見る。判定の中身は test_collect.py 側）
+        (out / "ai_judgments.json").write_text("{}", encoding="utf-8")
+        proc2 = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "score.py"), "--out", str(out)],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert proc2.returncode == 0, proc2.stdout + proc2.stderr
+        with (out / "result.json").open(encoding="utf-8") as fh:
+            cls.result = json.load(fh)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._td.cleanup()
+
+    def test_top_level_keys_match_exactly(self):
+        self.assertEqual(set(self.result), TOP_LEVEL_KEYS)
+
+    def test_pillar_keys_match_exactly(self):
+        for pid, p in self.result["pillars"].items():
+            with self.subTest(pillar=pid):
+                self.assertEqual(set(p), PILLAR_KEYS)
+
+    def test_every_item_key_matches_exactly(self):
+        self.assertEqual(len(self.result["items"]), 23)
+        for iid, item in self.result["items"].items():
+            with self.subTest(item=iid):
+                self.assertEqual(set(item), ITEM_KEYS)
+
+    def test_usage_tier_has_exactly_four_keys_no_internal_credit(self):
+        """本件の差し戻しそのもの: usage_tier に score.py 内部計算用の credit（小数）が
+        漏れて出ていないこと。F6・F9・F11 以外は null であること。
+        """
+        tiered_ids = {"F6", "F9", "F11"}
+        found_non_null = 0
+        for iid, item in self.result["items"].items():
+            tier = item["usage_tier"]
+            with self.subTest(item=iid):
+                if iid not in tiered_ids:
+                    self.assertIsNone(tier)
+                    continue
+                if tier is None:
+                    continue  # 測れなかった（例: F9でエージェント未使用）。形は無くてよい
+                found_non_null += 1
+                self.assertEqual(set(tier), USAGE_TIER_KEYS)
+                self.assertNotIn("credit", tier)
+        self.assertGreater(found_non_null, 0, "F6・F9・F11のどれも段階評価が無い見本では確認にならない")
+
+    def test_next_fixes_keys_match_exactly(self):
+        for fix in self.result["next_fixes"]:
+            self.assertEqual(set(fix), NEXT_FIX_KEYS)
+
+    def test_reference_keys_match_exactly_when_unnamed(self):
+        self.assertFalse(self.result["reference"]["names_included"])
+        self.assertEqual(set(self.result["reference"]), REFERENCE_KEYS_UNNAMED)
+
+    def test_usage_this_month_keys_match_exactly(self):
+        usage = self.result["usage_this_month"]
+        self.assertEqual(set(usage), {"month", "claude_code", "codex", "combined"})
+        self.assertEqual(set(usage["claude_code"]), USAGE_THIS_MONTH_TOOL_KEYS)
+        self.assertEqual(set(usage["codex"]), USAGE_THIS_MONTH_TOOL_KEYS | {"unreadable_session_count"})
+        self.assertEqual(set(usage["combined"]), {"active_seconds", "tokens"})
+        for key in ("claude_code", "codex", "combined"):
+            self.assertEqual(set(usage[key]["tokens"]), TOKENS_KEYS)
+
+    def test_tool_counts_keys_match_exactly(self):
+        counts = self.result["tool_counts"]
+        self.assertEqual(set(counts), {"claude_code", "codex", "combined"})
+        for key in ("claude_code", "codex", "combined"):
+            self.assertEqual(set(counts[key]), TOOL_COUNTS_TOOL_KEYS)
+
+    def test_inventory_keys_match_exactly(self):
+        inv = self.result["inventory"]
+        self.assertEqual(set(inv), {"skills", "agents", "connectors"})
+        for row in inv["skills"]:
+            self.assertEqual(set(row), INVENTORY_SKILL_KEYS)
+        for row in inv["agents"] + inv["connectors"]:
+            self.assertEqual(set(row), INVENTORY_AGENT_OR_CONNECTOR_KEYS)
+
+    def test_would_have_caught_the_regression(self):
+        """差し戻しの再現確認: usage_tier に余分なキーが1つでもあれば、このテストの検査
+        （assertEqual によるキー集合の完全一致）は必ず落ちることを、この場で直接確かめる。
+        """
+        tiered = next(
+            item["usage_tier"] for item in self.result["items"].values() if item["usage_tier"] is not None
+        )
+        poisoned = dict(tiered, credit=0.5)  # 差し戻し前の実際のバグを模した形
+        with self.assertRaises(AssertionError):
+            self.assertEqual(set(poisoned), USAGE_TIER_KEYS)
 
 
 if __name__ == "__main__":
