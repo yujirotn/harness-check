@@ -366,9 +366,14 @@ def render_reference_page(result: dict) -> str:
     startup = ref.get("startup_instructions", {})
     max_consec = ref.get("max_consecutive_tool_calls", {})
 
+    # Codex を検出しなかった人に「0バイト」の Codex 欄を見せない（使っていない道具の名前で迷わせない）
+    codex_card = ""
+    if result.get("tools_detected", {}).get("codex"):
+        codex_card = f"""
+  <div class="card"><div class="label">読まれる AGENTS.md の合計サイズ（Codex）</div><div class="value">{esc(startup.get('codex_total_bytes', 0))}バイト / {esc(startup.get('codex_file_count', 0))}ファイル</div></div>"""
+
     stat_cards = f"""<div class="statgrid">
-  <div class="card"><div class="label">毎回読まれる指示の合計行数（Claude Code）</div><div class="value">{esc(startup.get('claude_code_total_lines', 0))}行 / {esc(startup.get('claude_code_file_count', 0))}ファイル</div></div>
-  <div class="card"><div class="label">読まれる AGENTS.md の合計サイズ（Codex）</div><div class="value">{esc(startup.get('codex_total_bytes', 0))}バイト / {esc(startup.get('codex_file_count', 0))}ファイル</div></div>
+  <div class="card"><div class="label">毎回読まれる指示の合計行数（Claude Code）</div><div class="value">{esc(startup.get('claude_code_total_lines', 0))}行 / {esc(startup.get('claude_code_file_count', 0))}ファイル</div></div>{codex_card}
   <div class="card"><div class="label">最長の連続回数（人の発言を挟まず）</div><div class="value">{esc(max_consec.get('claude_code', 0))}回</div></div>
   <div class="card"><div class="label">キーらしき文字列（リポジトリ）</div><div class="value">{esc(repo_total)}件 / 走査 {esc(repo_scan.get('scanned_file_count', 0))}・読まなかった {esc(repo_scan.get('skipped_file_count', 0))}（画像など文字でないもの、1MBを超えるもの）</div></div>
   <div class="card"><div class="label">キーらしき文字列（設定ファイル）</div><div class="value">{esc(config_total)}件 / 走査 {esc(config_scan.get('scanned_file_count', 0))}</div></div>

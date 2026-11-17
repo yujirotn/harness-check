@@ -296,3 +296,18 @@ class ItemReasonTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CodexCardTest(unittest.TestCase):
+    """Codex を検出しなかった人に、参考ページの Codex 欄を見せない。"""
+
+    def _html(self, codex: bool) -> str:
+        result = minimal_result(tools_detected={"claude_code": True, "codex": codex})
+        template = (REPO_ROOT / "templates" / "report.html").read_text(encoding="utf-8")
+        return render.build_html(template, result)
+
+    def test_codex_card_hidden_when_codex_not_detected(self):
+        self.assertNotIn("読まれる AGENTS.md の合計サイズ", self._html(False))
+
+    def test_codex_card_shown_when_codex_detected(self):
+        self.assertIn("読まれる AGENTS.md の合計サイズ", self._html(True))
