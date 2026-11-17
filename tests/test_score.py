@@ -217,6 +217,21 @@ class TypeNameTest(unittest.TestCase):
         )
         self.assertEqual(score.compute_type_name(summary), "これから整える型")
 
+    def test_all_judged_pillars_weak_with_one_insufficient(self):
+        """判定不足の柱を除き、判定できた3本がすべて薄い → 薄い柱を並べず「これから整える型」（使い始めの人）。"""
+        summary = {
+            "foundation": {"name": "土台", "rate": 0.0, "judged_count": 4, "passed_count": 0, "total_count": 8, "sufficient": True},
+            "safety": {"name": "安全", "rate": 0.0, "judged_count": 2, "passed_count": 0, "total_count": 4, "sufficient": True},
+            "grow": {"name": "育つ仕組み", "rate": 0.0, "judged_count": 2, "passed_count": 0, "total_count": 3, "sufficient": True},
+            "delegate": {"name": "任せ方", "rate": 0.0, "judged_count": 2, "passed_count": 0, "total_count": 5, "sufficient": False},
+        }
+        self.assertEqual(score.compute_type_name(summary), "これから整える型")
+
+    def test_single_judged_pillar_weak_keeps_pillar_name(self):
+        """判定できた柱が1本だけなら、これまでどおりその柱の名前で言う。"""
+        summary = self._summary([("safety", "安全", 0.2)])
+        self.assertEqual(score.compute_type_name(summary), "安全が薄い型")
+
     def test_mixed_strong_and_weak(self):
         summary = self._summary(
             [("foundation", "土台", 0.9), ("safety", "安全", 0.2), ("grow", "育つ仕組み", 0.7), ("delegate", "任せ方", 0.7)]

@@ -275,7 +275,9 @@ def compute_type_name(pillar_summary: dict) -> str | None:
 
     if len(judged_pillars) == 4 and len(strong) == 4:
         return "全体が揃っている型"
-    if len(judged_pillars) == 4 and len(weak) == 4:
+    # 判定不足の柱を除いて、判定できた柱（2本以上）がすべて薄いときも「これから整える型」にする。
+    # 使い始めの人に「土台、安全、育つ仕組みが薄い型」と薄い柱を並べないため（2026-11-18 通し実行）。
+    if len(judged_pillars) >= 2 and len(weak) == len(judged_pillars):
         return "これから整える型"
     if strong and weak:
         return f"{'、'.join(strong)}は強く、{'、'.join(weak)}が薄い型"
