@@ -99,26 +99,29 @@ def _render_usage_summary(result: dict) -> str:
         + f'<div class="ucard"><div class="ulabel">合計</div><div class="uvalue">{esc(_format_hours(combined.get("active_seconds", 0)))}<span class="uunit">時間</span></div></div>'
     )
 
-    def tok_total(t: dict) -> int:
-        return sum(int(t.get(k, 0) or 0) for k in ("input", "output", "cache_read", "cache_write"))
+    def exchanged_total(t: dict) -> int:
+        # MEDIUM差し戻し: 大きく出す数字は「実際にやりとりした量」＝入力＋出力。
+        # キャッシュの読み書きは内訳の小さい文字で出す（今は合計のほぼ全部がキャッシュで、
+        # 実感のない数字になっていたため）。4区分は排他なので、足しても二重計上は無い。
+        return int(t.get("input", 0) or 0) + int(t.get("output", 0) or 0)
 
     def token_cell(label: str, u: dict) -> str:
         if not u.get("measured"):
             return f'<div class="ucard"><div class="ulabel">{esc(label)}</div><div class="uvalue">―</div></div>'
         t = u.get("tokens", {})
-        cache = int(t.get("cache_read", 0) or 0) + int(t.get("cache_write", 0) or 0)
         return (
             f'<div class="ucard"><div class="ulabel">{esc(label)}</div>'
-            f'<div class="uvalue">{esc(_format_compact_number(tok_total(t)))}<span class="uunit">トークン</span></div>'
+            f'<div class="uvalue">{esc(_format_compact_number(exchanged_total(t)))}<span class="uunit">トークン</span></div>'
             f'<div class="ubreak">入力{esc(_format_compact_number(t.get("input", 0)))}／'
             f'出力{esc(_format_compact_number(t.get("output", 0)))}／'
-            f'キャッシュ{esc(_format_compact_number(cache))}</div></div>'
+            f'キャッシュ読み{esc(_format_compact_number(t.get("cache_read", 0)))}／'
+            f'キャッシュ書き{esc(_format_compact_number(t.get("cache_write", 0)))}</div></div>'
         )
 
     token_cards = (
         token_cell("Claude Code", cc) + token_cell("Codex", cx)
         + f'<div class="ucard"><div class="ulabel">合計</div>'
-        f'<div class="uvalue">{esc(_format_compact_number(tok_total(combined.get("tokens", {}))))}<span class="uunit">トークン</span></div></div>'
+        f'<div class="uvalue">{esc(_format_compact_number(exchanged_total(combined.get("tokens", {}))))}<span class="uunit">トークン</span></div></div>'
     )
 
     cc_counts = counts.get("claude_code", {})
@@ -143,8 +146,7 @@ def _render_usage_summary(result: dict) -> str:
     return f"""<div class="usage-summary">
   <h4>今月使った時間・トークン{month_label}</h4>
   <div class="ugrid">{time_cards}</div>
-  <h4>今月使ったトークン</h4>
-  <div class="ugrid">{token_cards}</div>
+  <div class="ugrid ugrid-gap">{token_cards}</div>
   <h4>自分で用意したスキル・エージェントの本数</h4>
   <div class="ugrid">{count_cards}</div>
   <p class="unote">時間は、会話の記録の時刻の間隔が5分以内の連続を「使っていた時間」として足したもの（5分を超えた空きは数えない）。合計は2つの道具の値を単純に足したもの（同時に両方使っていれば重複する）。</p>
@@ -165,11 +167,12 @@ def render_cover(result: dict) -> str:
         p = result["pillars"][pid]
         rate = p.get("rate")
         pct = int(round((rate or 0) * 100))
+        pct_display = f"{pct}%" if rate is not None else "―"
         pillar_rows.append(
             f"""<tr>
   <th>{esc(p['name'])}</th>
   <td class="barcell"><div class="track"><div class="fill" style="width:{pct}%"></div></div></td>
-  <td class="pt"><b>{esc(p['passed_count'])}</b> / {esc(p['judged_count'])}</td>
+  <td class="pt"><b>{esc(p['passed_count'])}</b> / {esc(p['judged_count'])}<span class="pctnum">達成率{esc(pct_display)}</span></td>
 </tr>"""
         )
 
@@ -201,7 +204,7 @@ def render_cover(result: dict) -> str:
 <table class="pillars"><tbody>
 {''.join(pillar_rows)}
 </tbody></table>
-<p class="note">判定できなかった項目は、点数の分母から外している。柱ごとの内訳は次ページ以降。</p>
+<p class="note">判定できなかった項目は、点数の分母から外している。達成率は、使った形跡を回数で見る項目（スキル・エージェント・コネクタの使用）が回数に応じて重みの変わる部分点になっているため、「満たした数／判定できた数」の割り算とは一致しないことがある。柱ごとの内訳は次ページ以降。</p>
 {next_block}
 <footer class="pagefoot">1</footer>
 </section>"""
@@ -222,27 +225,26 @@ def render_pillar_pages(result: dict) -> str:
             status = item["status"]
             reason = item.get("reason")
             tier = item.get("usage_tier")
-            tier_suffix = (
-                f'　（直近30日は{esc(tier["count"])}回・段階{esc(tier["label"])}）'
+            # MEDIUM差し戻し: 段階は「項目の行」そのもの（結果の列）に必ず並べる
+            # （reasonの文末に添えるだけでは、行を見ただけで段階が分からない）。
+            # status（○×測定できず）の3値は変えない（下流が前提にしているため）。
+            note_text = (
+                f'{STATUS_NOTE[status]}（{esc(tier["count"])}回・段階{esc(tier["label"])}）'
                 if isinstance(tier, dict)
-                else ""
+                else STATUS_NOTE[status]
             )
             # v3 から項目ごとの理由がある。v2 の result.json には無いので、そのときは出さない
             reason_row = (
-                f"""<tr class="reason-row"><td></td><td colspan="3" class="reason">{esc(reason)}{tier_suffix}</td></tr>"""
+                f"""<tr class="reason-row"><td></td><td colspan="3" class="reason">{esc(reason)}</td></tr>"""
                 if isinstance(reason, str) and reason
-                else (
-                    f"""<tr class="reason-row"><td></td><td colspan="3" class="reason">{tier_suffix.lstrip("　")}</td></tr>"""
-                    if tier_suffix
-                    else ""
-                )
+                else ""
             )
             rows.append(
                 f"""<tbody class="item"><tr class="{status}">
   <td class="mk">{STATUS_MARK[status]}</td>
   <td class="name">{esc(iid)}　{esc(item['name'])}</td>
   <td class="judge">{esc(item['judge_label'])}</td>
-  <td class="note">{STATUS_NOTE[status]}</td>
+  <td class="note">{note_text}</td>
 </tr>{reason_row}</tbody>"""
             )
         rate = p.get("rate")

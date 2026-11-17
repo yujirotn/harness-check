@@ -106,7 +106,11 @@
   "tools_detected": { "claude_code": true, "codex": false },
   "window_days": 30,
 
-  // v4。今月の使用量（時間・トークン）。表紙の点数のすぐ下に出す（15章）
+  // v4。今月の使用量（時間・トークン）。表紙の点数のすぐ下に出す（15章）。
+  // tokens の4区分（input/output/cache_read/cache_write）は排他（重なりが無い）。
+  // 足すと実際にやりとりした量＋キャッシュの読み書きの合計になる（二重計上はしていない）。
+  // Claude Code は message.id ごとに1回だけ数える（重複行があるため。HIGH差し戻しで対応）。
+  // 表紙に大きく出す数字は input + output（実際にやりとりした量）で、cache_* は内訳として小さく出す。
   "usage_this_month": {
     "month": "2026-11",            // 日本時間の暦月のラベル。日付のみ（固有名ではない）
     "claude_code": {
@@ -222,7 +226,8 @@
 | `reference` | — | `inventory_truncated`・`inventory_summaries_replaced` が増える（名前なし・名前つきとも）。名前つき（`names_included: true`）のときだけ `named` があるのは v2 と同じ | 変わらない |
 | `pillars`・`next_fixes` | — | 変わらない | 変わらない（キーの形は同じ。`pillars.<p>.rate` の**計算の仕方**だけが変わる。15章・5-10） |
 
-- 読む側は `schema_version` で分ける。v2 には `reason`・`facts` が無く、v2・v3 には `usage_tier`・`usage_this_month`・`tool_counts` が無い。`render.py` はどの版の `result.json` もそのまま読める（新しい版のキーが無ければ、その枠を出さないだけ）。
+- 読む側は `schema_version` で分ける。v2 には `reason`・`facts` が無く、v2・v3 には `usage_tier`・`usage_this_month`・`tool_counts` が無い。**この挙動は本リポジトリの `render.py` に限った話**（どの版の `result.json` を渡されても、その版に無いキーの枠を出さないだけで動く）。
+- **送り先（送るスキル sho-san-share・事例ボックス）は、現状 `schema_version` を見て版を判定しており、知らない版（v4）は拒否する。** 「未知のキーは無視すれば動く」は保証されていない。v4 を受け付けるには送り先側の対応が別途必要（送り先の修正は別作業として扱う。このリポジトリ側の対応は、この事実を正しく書くところまで）。
 - `score.py` は v4 の `facts.json`（`collect.py` が出すもの）しか受け付けない。古い `facts.json` を渡すと止まるので、`collect.py` からやり直す。
 - v4で`pillars.<p>.rate`の**計算の仕方**が変わった点に注意: v3までは「○の数÷判定できた数」。v4は、段階評価のある項目（F6・F9・F11）がある柱では「部分点の合計÷判定できた数」。段階評価の無い柱（安全・育つ仕組み・任せ方）は、○＝1／×＝0のままなので計算結果は変わらない。
 

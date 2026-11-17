@@ -176,7 +176,7 @@ AIが手順書に従って事実を集め、点数つきのレポート（PDF）
 - **時間の数え方**: 会話の記録の時刻（種類を問わず全行）を集め、隣り合う時刻の間隔が**5分（300秒）以内**の連続を「使っていた時間」として足す。5分を超えた空きは数えない。5分ちょうどは含む（300秒以内）。Claude Code と Codex は別々に数え、合計は2つを単純に足したもの（同時に両方を使っていた時間は重複して数える。レポートの「見ていないもの」に明記する）。
 - **トークンの数え方**:
   - Claude Code: 会話の記録の `usage`（`input_tokens`・`output_tokens`・`cache_creation_input_tokens`・`cache_read_input_tokens`）を、今月の分だけ足す。表示名は「入力」「出力」「キャッシュ（読み書きの合計）」。
-  - Codex: 会話の記録のうち、読める（圧縮されていない）`token_usage_record` の `payload.usage` を今月の分だけ足す。`input_tokens`→入力、`output_tokens`＋`reasoning_output_tokens`→出力、`cached_input_tokens`→キャッシュの読み、`cache_write_input_tokens`→キャッシュの書き。
+  - Codex: 会話の記録のうち、読める（圧縮されていない）`token_usage_record` の `payload.usage` を今月の分だけ足す。**`cached_input_tokens` は `input_tokens` の内数**（新規に読んだ分とキャッシュから読んだ分の合計が `input_tokens`）なので、区分を排他にするため「入力」は `input_tokens` − `cached_input_tokens`（0未満にはしない）。`output_tokens`＋`reasoning_output_tokens`→出力、`cached_input_tokens`→キャッシュの読み、`cache_write_input_tokens`→キャッシュの書き。こうすることで、4区分（入力／出力／キャッシュの読み／キャッシュの書き）を足した合計が実際のやりとり量と一致し、二重に数えない（差し戻しで修正。2026-11-18）。
   - 圧縮（`.jsonl.zst`）で読めない記録が今月の分にあれば、件数をレポートに明記し、トークン・時間には含めない（推測で埋めない）。
 - **本数**: 自分で用意したスキルの本数・自分で定義したエージェントの本数を、Claude Code と Codex に分けて出す（既存の F5・F8 と同じ数え方。15章）。名前は既定では出さない（原則8）。
 - `result.json` には `usage_this_month`（時間・トークン）と `tool_counts`（本数）を新設し、レポートの表紙（点数のすぐ下）に出す（7章）。
@@ -385,8 +385,8 @@ Codex が対象の19項目のうち、「測定できず」が **13件 → 8件*
 - `schema_version` を3から4に上げた。**既存のキーは1つも削除・改名していない**（追加のみ）。
   - 新設: 最上位の `usage_this_month`・`tool_counts`、`items.<ID>.usage_tier`（F6・F9・F11以外はnull）。
   - `facts.json`（`collect.py` の出力）も同様にschema_versionを3から4に上げ、`score.py` はv4の`facts.json`だけを受け付ける（v2→v3のときと同じ運用。11章）。
-- v3までの形しか知らない読み手（送るスキル sho-san-share・事例ボックス）は、新しいキーを単に無視すれば動き続ける（docs/RESULT_SCHEMA.md参照）。
-- `render.py`・`templates/report.html` は、`usage_this_month`・`tool_counts` が無い（v3以前の）`result.json` を渡されても、その枠を出さないだけで落ちない。
+- **送り先（送るスキル sho-san-share・事例ボックス）は現状 `schema_version` で版を判定しており、知らない版（v4）を拒否する。** 「新しいキーを無視すれば動き続ける」は本リポジトリの `render.py` だけの話で、送り先には当てはまらない（差し戻しで訂正。2026-11-18）。送り先がv4を受け付けられるようにする対応は、送り先側で別途行う（このリポジトリの変更範囲ではない）。
+- `render.py`・`templates/report.html` は、`usage_this_month`・`tool_counts` が無い（v3以前の）`result.json` を渡されても、その枠を出さないだけで落ちない（これは本リポジトリ内で閉じた話）。
 
 ### 15-3. 今回やらないこと（積み残し）
 

@@ -417,12 +417,17 @@ def collect_facts(workdir: Path, claude_home: Path, now: Optional[datetime] = No
     connector_counts: dict[str, int] = {}
     month_timestamps: list[float] = []
     month_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+    # 今月のトークンの重複排除（HIGH差し戻し）: 同じ message.id の行が、同一ファイル内・ファイルを
+    # またいだ先の両方で重複することがある。全セッションで1つの集合を共有し、message.id ごとに
+    # 1回だけ数える（実測で重複排除前の約2.16倍に膨らんでいた）。
+    seen_message_ids: set = set()
 
     for f in sessions:
         stats = common.scan_claude_jsonl(
             f,
             known_skill_names=skill_names,
             known_agent_names=agent_names,
+            seen_message_ids=seen_message_ids,
             now=now if now.tzinfo else now.astimezone(),
             window_days=RECENT_DAYS,
             consecutive_threshold=CONSECUTIVE_THRESHOLD,

@@ -593,8 +593,19 @@ def scan_claude_jsonl(
     window_days: int = 30,
     consecutive_threshold: int = 20,
     max_bytes: int = 200 * 1024 * 1024,
+    seen_message_ids: Optional[set] = None,
 ) -> Optional[ConversationStats]:
-    """Claude Code の1セッション jsonl を1行ずつ読んで統計だけ返す（本文は保持しない）。"""
+    """Claude Code の1セッション jsonl を1行ずつ読んで統計だけ返す（本文は保持しない）。
+
+    `seen_message_ids`: 今月のトークン集計の重複排除用（HIGH差し戻し）。同じ `message.id` の行が
+    同一ファイル内・ファイルをまたいだ先の両方で重複することがあり（ストリーミングの再送・
+    セッションの分岐コピー等）、素直に全行の `usage` を足すと実際の2倍以上に膨らむ
+    （実測で約2.16倍）。呼び出し側が全セッションで共有する1つの集合を渡せば、ファイルを
+    またいでも `message.id` ごとに1回だけ数える。渡さなければこの関数の中だけ（1ファイル分）
+    で重複排除する。`id` が無い行は重複判定ができないため、推測で間引かずに毎回数える。
+    """
+    if seen_message_ids is None:
+        seen_message_ids = set()
     try:
         if path.stat().st_size > max_bytes:
             # 走査はするが、安全のため極端に大きいファイルは丸ごと読み込まず行単位でも続行
@@ -651,7 +662,12 @@ def scan_claude_jsonl(
                     continue
                 if in_month:
                     usage = message.get("usage")
-                    if isinstance(usage, dict):
+                    msg_id = message.get("id")
+                    dedup_key = msg_id if isinstance(msg_id, str) and msg_id else None
+                    already_counted = dedup_key is not None and dedup_key in seen_message_ids
+                    if isinstance(usage, dict) and not already_counted:
+                        if dedup_key is not None:
+                            seen_message_ids.add(dedup_key)
                         stats.month_tokens["input"] += usage_num(usage, "input_tokens")
                         stats.month_tokens["output"] += usage_num(usage, "output_tokens")
                         stats.month_tokens["cache_write"] += usage_num(usage, "cache_creation_input_tokens")

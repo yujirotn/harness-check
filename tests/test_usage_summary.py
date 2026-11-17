@@ -136,6 +136,75 @@ class ClaudeCodeJsonlUsageTest(unittest.TestCase):
             stats = common.scan_claude_jsonl(p, known_skill_names=[], known_agent_names=[], now=now)
             self.assertEqual(stats.month_tokens, {"input": 11, "output": 22, "cache_write": 33, "cache_read": 44})
 
+    def test_duplicate_message_id_within_same_file_is_counted_once(self):
+        """HIGH差し戻し: 同じ message.id が2回出てくる行（ストリーミングの再送・再構成等）で
+        トークンが2倍に膨らんでいた（実測で約2.16倍）。message.id ごとに1回だけ数える。
+        """
+        now = datetime(2026, 11, 17, 9, 0, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "session.jsonl"
+            usage = {
+                "input_tokens": 10, "output_tokens": 20,
+                "cache_creation_input_tokens": 30, "cache_read_input_tokens": 40,
+            }
+            self._write(
+                p,
+                [
+                    {"type": "assistant", "timestamp": "2026-11-05T00:00:00Z",
+                     "message": {"id": "msg_dup_1", "role": "assistant", "content": [], "usage": usage}},
+                    # 同じ message.id の重複行（中身は同一の usage を繰り返す）
+                    {"type": "assistant", "timestamp": "2026-11-05T00:00:01Z",
+                     "message": {"id": "msg_dup_1", "role": "assistant", "content": [], "usage": usage}},
+                ],
+            )
+            stats = common.scan_claude_jsonl(p, known_skill_names=[], known_agent_names=[], now=now)
+            self.assertEqual(stats.month_tokens, {"input": 10, "output": 20, "cache_write": 30, "cache_read": 40})
+
+    def test_duplicate_message_id_across_files_is_counted_once(self):
+        """同じ message.id が別のセッションファイルにまたがって重複する場合も、
+        呼び出し側が共有する seen_message_ids を渡せば1回だけ数える。
+        """
+        now = datetime(2026, 11, 17, 9, 0, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as td:
+            usage = {
+                "input_tokens": 100, "output_tokens": 5,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            }
+            p1 = Path(td) / "a.jsonl"
+            p2 = Path(td) / "b.jsonl"
+            line = {"type": "assistant", "timestamp": "2026-11-05T00:00:00Z",
+                    "message": {"id": "msg_shared", "role": "assistant", "content": [], "usage": usage}}
+            self._write(p1, [line])
+            self._write(p2, [line])
+
+            seen: set = set()
+            stats1 = common.scan_claude_jsonl(
+                p1, known_skill_names=[], known_agent_names=[], now=now, seen_message_ids=seen
+            )
+            stats2 = common.scan_claude_jsonl(
+                p2, known_skill_names=[], known_agent_names=[], now=now, seen_message_ids=seen
+            )
+            total_input = stats1.month_tokens["input"] + stats2.month_tokens["input"]
+            self.assertEqual(total_input, 100)  # 200 ではなく、1回分だけ
+
+    def test_messages_without_id_are_not_deduplicated(self):
+        """id が無い行（想定外の形）は、重複判定ができないので毎回数える（推測で排除しない）。"""
+        now = datetime(2026, 11, 17, 9, 0, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "session.jsonl"
+            usage = {"input_tokens": 1, "output_tokens": 1, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+            self._write(
+                p,
+                [
+                    {"type": "assistant", "timestamp": "2026-11-05T00:00:00Z",
+                     "message": {"role": "assistant", "content": [], "usage": usage}},
+                    {"type": "assistant", "timestamp": "2026-11-05T00:00:01Z",
+                     "message": {"role": "assistant", "content": [], "usage": usage}},
+                ],
+            )
+            stats = common.scan_claude_jsonl(p, known_skill_names=[], known_agent_names=[], now=now)
+            self.assertEqual(stats.month_tokens["input"], 2)
+
     def test_active_seconds_respects_five_minute_rule_across_the_whole_file(self):
         now = datetime(2026, 11, 17, 9, 0, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as td:
@@ -180,10 +249,31 @@ class CodexTokenUsageTest(unittest.TestCase):
             p.write_text(json.dumps(line, ensure_ascii=False) + "\n", encoding="utf-8")
             stats = codex.scan_codex_session_file(p, now=now, window_days=30)
             self.assertIsNotNone(stats)
-            self.assertEqual(stats["month_tokens"]["input"], 100)
+            # MEDIUM差し戻し: cached_input_tokens は input_tokens の内数。「入力」はその分を除く
+            # （排他区分にして二重計上を無くす。100 - 50 = 50）
+            self.assertEqual(stats["month_tokens"]["input"], 50)
             self.assertEqual(stats["month_tokens"]["output"], 27)  # output + reasoning
             self.assertEqual(stats["month_tokens"]["cache_read"], 50)
             self.assertEqual(stats["month_tokens"]["cache_write"], 5)
+
+    def test_cache_read_never_exceeds_input_when_input_tokens_already_excludes_cache(self):
+        """入力がキャッシュ分を含まない形（cached_input_tokens が input_tokens 以下でない）でも、
+        「入力」区分を負数にしない（安全側に0で止める）。
+        """
+        from readers import codex
+
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "rollout-2026-11-16T10-00-00-xyz.jsonl"
+            now = datetime(2026, 11, 17, 9, 0, 0, tzinfo=timezone.utc)
+            line = {
+                "timestamp": "2026-11-16T10:00:00.000Z",
+                "type": "token_usage_record",
+                "payload": {"usage": {"input_tokens": 10, "cached_input_tokens": 999, "output_tokens": 1}},
+            }
+            p.write_text(json.dumps(line, ensure_ascii=False) + "\n", encoding="utf-8")
+            stats = codex.scan_codex_session_file(p, now=now, window_days=30)
+            self.assertEqual(stats["month_tokens"]["input"], 0)
+            self.assertEqual(stats["month_tokens"]["cache_read"], 999)
 
     def test_unreadable_zst_sessions_are_counted_but_not_summed(self):
         from readers import codex
@@ -207,11 +297,73 @@ class CodexTokenUsageTest(unittest.TestCase):
             compressed = sessions / "rollout-2026-11-16T11-00-00-bbb.jsonl.zst"
             compressed.write_bytes(b"\x28\xb5\x2f\xfd not a real archive")
 
-            summary = codex._collect_month_usage(codex_home, now=now)
+            usage = codex._collect_codex_usage(codex_home, now=now, window_days=30)
+            summary = usage["month_usage"]
             self.assertEqual(summary["read_session_count"], 1)
             self.assertEqual(summary["unreadable_session_count"], 1)
             self.assertEqual(summary["tokens"]["input"], 5)
             self.assertTrue(summary["measured"])  # 読めた分が1件あるので測定できた扱い
+
+    def test_month_usage_measured_false_when_all_data_is_compressed(self):
+        """LOW/MEDIUM差し戻し: 今月分が1件もなければ measured=True（正しいゼロ）、
+        今月分はあるが全部圧縮で読めない場合は measured=False（実態不明を0と断定しない）。
+        """
+        from readers import codex
+
+        now = datetime(2026, 11, 17, 9, 0, 0, tzinfo=timezone.utc)
+
+        with tempfile.TemporaryDirectory() as td:
+            codex_home_empty = Path(td) / "codex_home_empty"
+            codex_home_empty.mkdir()
+            usage_empty = codex._collect_codex_usage(codex_home_empty, now=now, window_days=30)
+            self.assertTrue(usage_empty["month_usage"]["measured"])
+            self.assertEqual(usage_empty["month_usage"]["active_seconds"], 0)
+
+        with tempfile.TemporaryDirectory() as td:
+            codex_home_all_zst = Path(td) / "codex_home_all_zst"
+            sessions = codex_home_all_zst / "sessions" / "2026" / "11" / "16"
+            sessions.mkdir(parents=True)
+            (sessions / "rollout-2026-11-16T10-00-00-ccc.jsonl.zst").write_bytes(b"\x28\xb5\x2f\xfd")
+            usage_all_zst = codex._collect_codex_usage(codex_home_all_zst, now=now, window_days=30)
+            self.assertFalse(usage_all_zst["month_usage"]["measured"])
+
+    def test_candidate_files_are_scanned_only_once_for_both_windows(self):
+        """LOW差し戻し: 直近30日用とまとめて今月用の集計を1回の走査で行う
+        （_collect_session_summary・_collect_month_usage の2関数を1つに統合）。
+        """
+        from readers import codex
+
+        with tempfile.TemporaryDirectory() as td:
+            codex_home = Path(td) / "codex_home"
+            sessions = codex_home / "sessions" / "2026" / "11" / "16"
+            sessions.mkdir(parents=True)
+            now = datetime(2026, 11, 17, 9, 0, 0, tzinfo=timezone.utc)
+            p = sessions / "rollout-2026-11-16T10-00-00-ddd.jsonl"
+            p.write_text(
+                json.dumps({
+                    "timestamp": "2026-11-16T10:00:00.000Z", "type": "token_usage_record",
+                    "payload": {"usage": {"input_tokens": 3, "output_tokens": 0,
+                                           "cached_input_tokens": 0, "cache_write_input_tokens": 0}},
+                }, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+            call_count = {"n": 0}
+            original = codex.scan_codex_session_file
+
+            def counting_wrapper(*args, **kwargs):
+                call_count["n"] += 1
+                return original(*args, **kwargs)
+
+            codex.scan_codex_session_file = counting_wrapper
+            try:
+                usage = codex._collect_codex_usage(codex_home, now=now, window_days=30)
+            finally:
+                codex.scan_codex_session_file = original
+
+            self.assertEqual(call_count["n"], 1, "候補ファイルは1回だけ読む（直近30日・今月のどちらの集計にも使う）")
+            self.assertEqual(usage["session_summary"]["read_count"], 1)
+            self.assertEqual(usage["month_usage"]["read_session_count"], 1)
 
 
 class UsageTierBoundaryTest(unittest.TestCase):
