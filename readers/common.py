@@ -17,6 +17,26 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Iterable, Optional
 
+try:
+    import tomllib  # Python 3.11 以上の標準機能。TOML を正しく（入れ子・一行テーブルも）読める。
+except ModuleNotFoundError:  # pragma: no cover - 3.9・3.10 環境（CIはそれより新しいため通常は通らない）
+    tomllib = None  # type: ignore[assignment]
+
+
+def parse_toml_strict(text: str) -> Optional[dict]:
+    """標準の `tomllib`（3.11以上）で TOML を正しく読む。
+
+    3.9・3.10（`tomllib` が無い）、または壊れた TOML のときは None を返す。
+    呼び出す側は、None のとき「正しく読めなかった」前提で判定する（測定できず、に倒す。
+    推測で埋めない）。
+    """
+    if tomllib is None:
+        return None
+    try:
+        return tomllib.loads(text)
+    except Exception:
+        return None
+
 
 # ---------------------------------------------------------------------------
 # 秘密の値（キーの形）の走査（5-5）
@@ -395,10 +415,14 @@ def has_frontmatter_paths(text: str) -> bool:
 
 
 def toml_top_level_scalars(text: str) -> dict[str, str]:
-    """トップレベル（どのテーブルにも属さない）の key = value を雑に拾う。
+    """トップレベル（どのテーブルにも属さない）の `key = "value"` を雑に拾う。
 
-    文字列値はクォートを外す。配列・テーブルは文字列化せず素通りする。
-    完全な TOML パーサではない（本ツールの判定に必要な範囲のみ）。
+    **クォートされた文字列の値だけを認める**（`"..."` か `'...'`）。クォート無しの値
+    （`key = value` のような無効な TOML や、真偽値・数値・配列・テーブルなど文字列以外の値）
+    は記録しない。壊れた・想定外の書き方を、値があるかのように読んでしまわないため
+    （`tomllib` が無い 3.9・3.10 向けの簡易フォールバックなので、誤って緩く読まない）。
+    完全な TOML パーサではない（本ツールの判定に必要な範囲のみ）。`tomllib`（3.11以上）が
+    使える環境では `parse_toml_strict` を優先する。
     """
     out: dict[str, str] = {}
     in_table = False
@@ -415,12 +439,34 @@ def toml_top_level_scalars(text: str) -> dict[str, str]:
         if not m:
             continue
         key, val = m.group(1), m.group(2).strip()
-        val = val.split("#", 1)[0].strip() if not val.startswith('"') else val
+        val = val.split("#", 1)[0].strip() if (val.startswith('"') or val.startswith("'")) is False else val
         if val.startswith('"') and val.endswith('"') and len(val) >= 2:
-            val = val[1:-1]
-        elif val.startswith(":") :
-            val = val.lstrip(":").strip('"')
-        out[key] = val
+            out[key] = val[1:-1]
+        elif val.startswith("'") and val.endswith("'") and len(val) >= 2:
+            out[key] = val[1:-1]
+        # クォート無しの値は、無効な TOML か文字列以外の値として記録しない（上記docstring）
+    return out
+
+
+_INLINE_TABLE_PAIR_RE = re.compile(
+    r'(?:"((?:[^"\\]|\\.)*)"|\'([^\']*)\')\s*=\s*'
+    r'(?:"((?:[^"\\]|\\.)*)"|\'([^\']*)\'|([A-Za-z0-9_.\-]+))'
+)
+
+
+def toml_inline_table_pairs(value: str) -> dict[str, str]:
+    """`{ "." = "write", "**/*.env" = "deny" }` のような一行テーブルの中の `key = value` を雑に拾う。
+
+    `tomllib` が使えない環境向けの簡易読み取り（Codex の許可の仕組みは、`:workspace_roots` の
+    値を一行テーブルで書く公式の書き方があるため）。キーは引用符つきのものだけを対象にする。
+    値がクォート無し（`true`・数値など）のときは、そのままの文字列として返す。
+    """
+    out: dict[str, str] = {}
+    for m in _INLINE_TABLE_PAIR_RE.finditer(value):
+        key = m.group(1) if m.group(1) is not None else m.group(2)
+        val = m.group(3) if m.group(3) is not None else (m.group(4) if m.group(4) is not None else m.group(5))
+        if key is not None and val is not None:
+            out[key] = val
     return out
 
 

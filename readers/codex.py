@@ -95,51 +95,143 @@ def mcp_servers_present(codex_home: Path) -> bool:
     return common.toml_has_table(text, "mcp_servers")
 
 
-def _approval_and_sandbox(codex_home: Path) -> dict:
+def _read_codex_config(codex_home: Path) -> dict:
+    """`config.toml` を読む。
+
+    `tomllib`（3.11以上）があれば、それで正しく読む（入れ子のテーブル・一行テーブルも
+    そのまま辞書になる）。壊れた TOML なら `config_broken=True` を返し、呼び出す側は
+    承認・許可関連の項目（S2・S3・S4・D1）をすべて「測定できず」にする（推測で埋めない）。
+    `tomllib` が無い環境（3.9・3.10）は、クォートされた文字列の値だけを認める簡易読み取りに
+    フォールバックする（`permissions_table` は None＝「別途 `toml_table_scalars` 等で読む」）。
+    """
     text = config_toml_text(codex_home)
     if text is None:
-        return {"approval_policy": None, "sandbox_mode": None, "default_permissions": None}
+        return {
+            "present": False, "config_broken": False,
+            "approval_policy": None, "sandbox_mode": None, "default_permissions": None,
+            "permissions_table": None,
+        }
+
+    if common.tomllib is not None:
+        parsed = common.parse_toml_strict(text)
+        if parsed is None:
+            return {
+                "present": True, "config_broken": True,
+                "approval_policy": None, "sandbox_mode": None, "default_permissions": None,
+                "permissions_table": None,
+            }
+        approval_policy = parsed.get("approval_policy")
+        sandbox_mode = parsed.get("sandbox_mode")
+        default_permissions = parsed.get("default_permissions")
+        permissions_table = parsed.get("permissions")
+        return {
+            "present": True, "config_broken": False,
+            "approval_policy": approval_policy if isinstance(approval_policy, str) else None,
+            "sandbox_mode": sandbox_mode if isinstance(sandbox_mode, str) else None,
+            "default_permissions": default_permissions if isinstance(default_permissions, str) else None,
+            "permissions_table": permissions_table if isinstance(permissions_table, dict) else {},
+        }
+
     scalars = common.toml_top_level_scalars(text)
     return {
+        "present": True, "config_broken": False,
         "approval_policy": scalars.get("approval_policy"),
         "sandbox_mode": scalars.get("sandbox_mode"),
-        # 新しい書き方（許可の仕組み）。`:read-only` 等の組み込み名か、自分で決めた名前。
         "default_permissions": scalars.get("default_permissions"),
+        "permissions_table": None,
     }
 
 
 def _normalize_permission_profile(value: Optional[str]) -> Optional[str]:
-    """`default_permissions` の値を正規化する（先頭の `:` を外し、小文字にする）。"""
+    """`default_permissions` の値から先頭の `:` だけ外す。
+
+    大文字小文字は変えない（自分で決めた名前はテーブル名として大文字小文字が意味を持つ
+    ため。組み込み名かどうかの判定は `_is_builtin_permission_name` が別途小文字で比べる）。
+    """
     if not isinstance(value, str):
         return None
-    v = value.strip().strip('"').strip("'").strip()
+    v = value.strip()
     if v.startswith(":"):
         v = v[1:]
-    v = v.strip().lower()
+    v = v.strip()
     return v or None
 
 
-def secret_file_deny_rule_count(codex_home: Path, profile_name: Optional[str]) -> int:
-    """S2: 自分で決めた許可の仕組み（`permissions.<name>.filesystem`）の中で、
+def _is_builtin_permission_name(value: Optional[str]) -> bool:
+    return isinstance(value, str) and value.strip().lower() in _BUILTIN_PERMISSION_PROFILES
 
-    秘密ファイルらしいパスを `deny`（読み取り拒否）にしている行の数。
-    組み込みプロファイル（`:read-only` 等）は自分でパスを指定できないため対象外
-    （呼び出す側が profile_name に None を渡す）。
+
+def _secret_file_deny_count_from_dict(filesystem_node) -> int:
+    """`permissions.<name>.filesystem` の中身（辞書）を再帰的に調べる。
+
+    `tomllib` で読んだ辞書は、公式の書き方（`":workspace_roots" = { ... }` のような
+    一行テーブルや `[permissions.<name>.filesystem.":workspace_roots"]` の入れ子テーブル）
+    のどちらも、ふつうの入れ子の dict になっているため、同じ再帰処理で両方拾える。
     """
-    if not profile_name:
+    if not isinstance(filesystem_node, dict):
         return 0
+    n = 0
+    for key, val in filesystem_node.items():
+        if isinstance(val, dict):
+            n += _secret_file_deny_count_from_dict(val)
+            continue
+        if isinstance(val, str) and val.strip().lower() == "deny":
+            if any(w in str(key).lower() for w in _SECRET_FILE_PATTERN_WORDS):
+                n += 1
+    return n
+
+
+def _secret_file_deny_count_fallback_text(codex_home: Path, profile_name: str) -> int:
+    """`tomllib` が無い環境（3.9・3.10）向けの簡易読み取り。
+
+    公式の書き方2通り（`[permissions.<name>.filesystem]` 直下の一行テーブル
+    `":workspace_roots" = { ... }`、および `[permissions.<name>.filesystem.":workspace_roots"]`
+    という入れ子テーブル）の両方を見る。完全な TOML パーサではないため、`tomllib` が
+    使える環境（3.11以上）より取りこぼす可能性がある。
+    """
     text = config_toml_text(codex_home)
     if text is None:
         return 0
-    table = common.toml_table_scalars(text, f"permissions.{profile_name}.filesystem")
     n = 0
-    for key, val in table.items():
+    base_path = f"permissions.{profile_name}.filesystem"
+
+    def count_scalar(key: str, val: str) -> int:
         if val.strip().strip('"').strip("'").lower() != "deny":
+            return 0
+        return 1 if any(w in key.lower() for w in _SECRET_FILE_PATTERN_WORDS) else 0
+
+    direct = common.toml_table_scalars(text, base_path)
+    for key, val in direct.items():
+        v = val.strip()
+        if v.startswith("{") and v.endswith("}"):
+            for ik, iv in common.toml_inline_table_pairs(v).items():
+                n += count_scalar(ik, iv)
             continue
-        low_key = key.lower()
-        if any(w in low_key for w in _SECRET_FILE_PATTERN_WORDS):
-            n += 1
+        n += count_scalar(key, val)
+
+    nested = common.toml_table_scalars(text, base_path + '.":workspace_roots"')
+    for key, val in nested.items():
+        n += count_scalar(key, val)
+
     return n
+
+
+def secret_file_deny_rule_count(codex_home: Path, profile_name: Optional[str], permissions_table) -> int:
+    """S2: 自分で決めた許可の仕組み（`permissions.<name>.filesystem`）の中で、
+
+    秘密ファイルらしいパスを `deny`（読み取り拒否）にしている設定の数。
+    組み込みプロファイル（`:read-only` 等）は自分でパスを指定できないため対象外
+    （呼び出す側が profile_name に None を渡す）。
+    `permissions_table` が辞書（`tomllib` で読めた場合）なら、それを使う（入れ子・
+    一行テーブルも正しく拾える）。None（`tomllib` が無い環境）なら簡易読み取りに回す。
+    """
+    if not profile_name:
+        return 0
+    if permissions_table is not None:
+        profile = permissions_table.get(profile_name)
+        filesystem = profile.get("filesystem") if isinstance(profile, dict) else None
+        return _secret_file_deny_count_from_dict(filesystem)
+    return _secret_file_deny_count_fallback_text(codex_home, profile_name)
 
 
 def hooks_json_has_stop(codex_home: Path, workdir: Path) -> Optional[bool]:
@@ -237,28 +329,44 @@ def collect_facts(workdir: Path, codex_home: Path, home: Path, now=None) -> dict
         "unreadable_session_count": unreadable_count,
     }
 
-    approval = _approval_and_sandbox(codex_home)
-    policy = approval["approval_policy"]
-    sandbox = approval["sandbox_mode"]
-    default_permission = _normalize_permission_profile(approval["default_permissions"])
-    is_builtin_permission = default_permission in _BUILTIN_PERMISSION_PROFILES
-    custom_permission_profile = default_permission if (default_permission and not is_builtin_permission) else None
+    config = _read_codex_config(codex_home)
+    config_broken = config["config_broken"]
+    policy = config["approval_policy"]
+    sandbox = config["sandbox_mode"]
+    permissions_table = config["permissions_table"]
+    default_permission = _normalize_permission_profile(config["default_permissions"])
+    is_builtin_permission = _is_builtin_permission_name(default_permission)
 
-    secret_rule_count = secret_file_deny_rule_count(codex_home, custom_permission_profile)
-    s2_measured = custom_permission_profile is not None
+    # 旧キー（sandbox_mode）があるときは、新しい許可の仕組み（default_permissions）は
+    # 判定に使わない（公式の「同時に使わない」案内に合わせる。SPEC 14-1）。
+    use_new_permission_signal = (not config_broken) and sandbox is None
+
+    custom_permission_profile = (
+        default_permission
+        if (use_new_permission_signal and default_permission and not is_builtin_permission)
+        else None
+    )
+
+    secret_rule_count = (
+        0 if config_broken else secret_file_deny_rule_count(codex_home, custom_permission_profile, permissions_table)
+    )
+    s2_measured = (not config_broken) and (custom_permission_profile is not None)
     facts["S2"] = {
         "measured": s2_measured,
         "pass": (secret_rule_count > 0) if s2_measured else None,
         "rule_count": secret_rule_count,
     }
 
-    has_approval_signal = (
+    has_approval_signal = (not config_broken) and (
         policy is not None
         or sandbox is not None
-        or (is_builtin_permission)
+        or (use_new_permission_signal and is_builtin_permission)
     )
 
-    is_full_access = (sandbox or "").strip().lower() == "danger-full-access" or default_permission == "danger-full-access"
+    is_full_access_from_permissions = (
+        use_new_permission_signal and is_builtin_permission and default_permission.strip().lower() == "danger-full-access"
+    )
+    is_full_access = (sandbox or "").strip().lower() == "danger-full-access" or is_full_access_from_permissions
     is_never_ask = (policy or "").strip().lower() == "never"
     is_always_ask = (policy or "").strip().lower() == "untrusted"
 
@@ -390,8 +498,7 @@ def _is_human_message(payload: dict) -> bool:
     return payload.get("type") == "message" and payload.get("role") == "user"
 
 
-def scan_codex_session_file(path: Path, now: Optional[datetime], window_days: int,
-                             max_bytes: int = 200 * 1024 * 1024) -> Optional[dict]:
+def scan_codex_session_file(path: Path, now: Optional[datetime], window_days: int) -> Optional[dict]:
     """1件の平文の会話の記録（.jsonl）を1行ずつ読み、D5・F11に使う統計だけ返す。
 
     本文・名前は保持しない。読めなければ None（呼び出す側が「読めなかった」扱いにする）。
@@ -432,7 +539,10 @@ def scan_codex_session_file(path: Path, now: Optional[datetime], window_days: in
                 if consecutive > max_consecutive:
                     max_consecutive = consecutive
                 namespace = payload.get("namespace")
-                if isinstance(namespace, str) and namespace.startswith("mcp__"):
+                is_mcp_call = (isinstance(namespace, str) and namespace.startswith("mcp__")) or (
+                    payload.get("type") == "mcp_tool_call"
+                )
+                if is_mcp_call:
                     ts = _parse_entry_ts(entry.get("timestamp"))
                     if ts is not None and ts >= cutoff:
                         mcp_used_recent = True

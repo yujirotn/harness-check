@@ -441,6 +441,217 @@ class CodexNewConfigFormatTest(unittest.TestCase):
             s2 = facts["items"]["S2"]["per_tool"]["codex"]
             self.assertFalse(s2["measured"])
 
+    # --- 差し戻し（HIGH/MEDIUM）対応分 ----------------------------------------
+
+    def test_table_scalars_alone_misses_official_inline_workspace_roots_form(self):
+        """直すべき問題そのものの確認: 直下のスカラーだけを見る読み方では、
+
+        公式の書き方（`":workspace_roots" = { ... }` という一行テーブル）の中の
+        deny を見つけられない（HIGH finding #1 の再現）。
+        """
+        import readers.common as common_mod
+
+        table = common_mod.toml_table_scalars(
+            '[permissions.myprofile.filesystem]\n'
+            '":workspace_roots" = { "." = "write", "**/*.env" = "deny" }\n',
+            "permissions.myprofile.filesystem",
+        )
+        found = any(
+            v.strip().strip('"').lower() == "deny" and ".env" in k.lower() for k, v in table.items()
+        )
+        self.assertFalse(found, "inline table の中の deny は、直下スカラーの読み方だけでは見えないはず")
+
+    def test_s2_pass_with_official_inline_workspace_roots_form(self):
+        """HIGH finding #1: 公式の書き方（一行テーブルの `:workspace_roots`）で deny を数える。"""
+        import tempfile
+
+        config = (
+            'model = "gpt-test"\n'
+            'default_permissions = "myprofile"\n'
+            "\n"
+            "[permissions.myprofile]\n"
+            'description = "demo"\n'
+            "\n"
+            "[permissions.myprofile.filesystem]\n"
+            '":workspace_roots" = { "." = "write", "**/*.env" = "deny" }\n'
+            '"/absolute/path/to/secrets" = "deny"\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._run_with_config(Path(td), config)
+            s2 = facts["items"]["S2"]["per_tool"]["codex"]
+            self.assertTrue(s2["measured"])
+            self.assertTrue(s2["pass"])
+            self.assertEqual(s2["rule_count"], 2)
+
+    def test_s2_pass_with_nested_table_header_workspace_roots_form(self):
+        """HIGH finding #1: 入れ子テーブルの書き方（別表記）でも deny を数える。"""
+        import tempfile
+
+        config = (
+            'model = "gpt-test"\n'
+            'default_permissions = "myprofile"\n'
+            "\n"
+            '[permissions.myprofile.filesystem.":workspace_roots"]\n'
+            '"**/*.env" = "deny"\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._run_with_config(Path(td), config)
+            s2 = facts["items"]["S2"]["per_tool"]["codex"]
+            self.assertTrue(s2["measured"])
+            self.assertTrue(s2["pass"])
+
+    def test_s2_pass_with_mixed_case_custom_profile_name(self):
+        """MEDIUM finding #2: 自分で決めた名前の大文字小文字が、テーブル名の原文のまま引けること。"""
+        import tempfile
+
+        config = (
+            'model = "gpt-test"\n'
+            'default_permissions = "MyProfile"\n'
+            "\n"
+            "[permissions.MyProfile.filesystem]\n"
+            '".env" = "deny"\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._run_with_config(Path(td), config)
+            s2 = facts["items"]["S2"]["per_tool"]["codex"]
+            self.assertTrue(s2["measured"])
+            self.assertTrue(s2["pass"])
+
+    def test_sandbox_mode_takes_priority_over_default_permissions(self):
+        """MEDIUM finding #5: 旧キー（sandbox_mode）があるときは default_permissions を使わない。
+
+        sandbox_mode は安全な workspace-write、default_permissions は危険な
+        full-access を指していても、旧キーが優先され S3 は○のまま（公式の「同時に使わない」案内）。
+        """
+        import tempfile
+
+        config = (
+            'model = "gpt-test"\n'
+            'approval_policy = "on-request"\n'
+            'sandbox_mode = "workspace-write"\n'
+            'default_permissions = ":danger-full-access"\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._run_with_config(Path(td), config)
+            s3 = facts["items"]["S3"]["per_tool"]["codex"]
+            self.assertTrue(s3["measured"])
+            self.assertTrue(s3["pass"])
+            self.assertFalse(s3["full_access"])
+
+    def test_malformed_toml_is_unmeasured_not_guessed(self):
+        """HIGH finding #4: 壊れた TOML は、承認・許可関連の項目をすべて測定できずにする。"""
+        import tempfile
+
+        config = 'model = "gpt-test"\ndefault_permissions = :danger-full-access\n'
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._run_with_config(Path(td), config)
+            for iid in ("S2", "S3", "S4", "D1"):
+                self.assertFalse(facts["items"][iid]["per_tool"]["codex"]["measured"], iid)
+
+    def test_malformed_toml_syntax_error_is_unmeasured(self):
+        import tempfile
+
+        config = "[[[bad\n"
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._run_with_config(Path(td), config)
+            for iid in ("S2", "S3", "S4", "D1"):
+                self.assertFalse(facts["items"][iid]["per_tool"]["codex"]["measured"], iid)
+
+
+class CodexTomllibFallbackTest(unittest.TestCase):
+    """`tomllib`（3.11以上）が無い環境（3.9・3.10）相当のフォールバック経路を確かめる。
+
+    collect.py を subprocess で呼ぶと、サブプロセス側の readers.common は毎回フレッシュに
+    import されてしまい、このテストプロセス内での monkeypatch が効かない。そのため、
+    readers.codex.collect_facts（本物の判定ロジック）をこのプロセス内で直接呼ぶ。
+    """
+
+    def _collect_codex_facts(self, tmp_path: Path, config_text: str):
+        from readers import codex as codex_mod
+
+        codex_home = copy_fixture("codex_home_fail", tmp_path / "codex_home")
+        (codex_home / "config.toml").write_text(config_text, encoding="utf-8")
+        workdir = copy_fixture("repo_fail", tmp_path / "workdir")
+        make_git_repo(workdir, with_remote=False, track_all=True)
+        home = copy_fixture("home_fail", tmp_path / "home")
+        from datetime import datetime
+
+        now = datetime.fromisoformat(TEST_NOW)
+        return codex_mod.collect_facts(workdir, codex_home, home, now=now)
+
+    def _without_tomllib(self, fn):
+        import readers.common as common_mod
+
+        original = common_mod.tomllib
+        common_mod.tomllib = None
+        try:
+            return fn()
+        finally:
+            common_mod.tomllib = original
+
+    def test_s2_official_inline_form_without_tomllib(self):
+        import tempfile
+
+        config = (
+            'model = "gpt-test"\n'
+            'default_permissions = "myprofile"\n'
+            "\n"
+            "[permissions.myprofile.filesystem]\n"
+            '":workspace_roots" = { "." = "write", "**/*.env" = "deny" }\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._without_tomllib(lambda: self._collect_codex_facts(Path(td), config))
+        self.assertTrue(facts["S2"]["measured"])
+        self.assertTrue(facts["S2"]["pass"])
+
+    def test_s2_mixed_case_profile_without_tomllib(self):
+        import tempfile
+
+        config = (
+            'model = "gpt-test"\n'
+            'default_permissions = "MyProfile"\n'
+            "\n"
+            "[permissions.MyProfile.filesystem]\n"
+            '".env" = "deny"\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._without_tomllib(lambda: self._collect_codex_facts(Path(td), config))
+        self.assertTrue(facts["S2"]["measured"])
+        self.assertTrue(facts["S2"]["pass"])
+
+    def test_s3_s4_d1_with_default_permissions_without_tomllib(self):
+        import tempfile
+
+        config = 'model = "gpt-test"\ndefault_permissions = ":danger-full-access"\n'
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._without_tomllib(lambda: self._collect_codex_facts(Path(td), config))
+        self.assertTrue(facts["S3"]["measured"])
+        self.assertFalse(facts["S3"]["pass"])
+
+    def test_malformed_toml_is_unmeasured_without_tomllib(self):
+        """findings#4: クォート無しの値は無効なTOMLとして無視する（簡易読み取りの安全側）。"""
+        import tempfile
+
+        config = 'model = "gpt-test"\ndefault_permissions = :danger-full-access\n'
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._without_tomllib(lambda: self._collect_codex_facts(Path(td), config))
+        self.assertFalse(facts["S3"]["measured"])
+        self.assertFalse(facts["S2"]["measured"])
+
+    def test_sandbox_mode_priority_without_tomllib(self):
+        import tempfile
+
+        config = (
+            'model = "gpt-test"\n'
+            'sandbox_mode = "workspace-write"\n'
+            'default_permissions = ":danger-full-access"\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            facts = self._without_tomllib(lambda: self._collect_codex_facts(Path(td), config))
+        self.assertTrue(facts["S3"]["measured"])
+        self.assertTrue(facts["S3"]["pass"])
+        self.assertFalse(facts["S3"]["full_access"])
+
 
 class CodexSessionLogTest(unittest.TestCase):
     """会話の記録（平文の .jsonl）から D5・F11 が判定できることを確かめる。
@@ -537,6 +748,26 @@ class CodexSessionLogTest(unittest.TestCase):
             f11 = facts["items"]["F11"]["per_tool"]["codex"]
             self.assertFalse(d5["measured"])
             self.assertFalse(f11["measured"])
+
+    def test_f11_pass_from_mcp_tool_call_type_without_namespace(self):
+        """MEDIUM finding #3: namespace が無くても、payload.type が mcp_tool_call なら数える
+
+        （D5 の道具呼び出しの数え方と揃える）。
+        """
+
+        def build(sessions_dir):
+            ts = "2026-11-06T09:00:00Z"
+            lines = [
+                _human_line(ts),
+                _jsonl_line(ts, "mcp_tool_call", name="some_connector_tool"),
+            ]
+            write_codex_session(sessions_dir / "2026" / "11" / "06", "2026-11-06T09-00-00", lines)
+
+        with __import__("tempfile").TemporaryDirectory() as td:
+            facts = self._run_with_sessions(Path(td), build)
+            f11 = facts["items"]["F11"]["per_tool"]["codex"]
+            self.assertTrue(f11["measured"])
+            self.assertTrue(f11["pass"])
 
 
 class F2LongInstructionTest(unittest.TestCase):
