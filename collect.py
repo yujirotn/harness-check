@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from readers import common  # noqa: E402
 from readers import claude_code  # noqa: E402
 from readers import codex  # noqa: E402
+from report_details import collect_report_details  # noqa: E402
 
 
 SCHEMA_VERSION = 5
@@ -630,6 +631,11 @@ def main() -> int:
         # v4。今月の使用量（時間・トークン）とスキル・エージェントの本数（道具ごと）。5-10
         "usage_this_month": usage_this_month,
         "tool_counts": tool_counts,
+        # ローカルレポート専用。score.py は result.json に転記しない。
+        "report_details": collect_report_details(
+            workdir, claude_home, codex_home, home, out_dir,
+            {"claude_code": cc_detected, "codex": codex_detected},
+        ),
         # v5。表紙のダッシュボード（直近30日の日別・使われている／眠っている本数・任せた量）。16-3
         **build_dashboard(cc_detected, cc_facts),
     }

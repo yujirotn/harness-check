@@ -38,7 +38,7 @@ NETWORK_MODULE_PATTERN = re.compile(
     re.MULTILINE,
 )
 
-SCRIPT_FILES = ["collect.py", "score.py", "render.py"]
+SCRIPT_FILES = ["collect.py", "score.py", "render.py", "report_details.py"]
 READER_FILES = ["readers/common.py", "readers/claude_code.py", "readers/codex.py"]
 
 
@@ -351,6 +351,7 @@ class ExternalProgramGuardTest(unittest.TestCase):
             REPO_ROOT / "collect.py",
             REPO_ROOT / "score.py",
             REPO_ROOT / "render.py",
+            REPO_ROOT / "report_details.py",
             REPO_ROOT / "readers" / "claude_code.py",
             REPO_ROOT / "readers" / "codex.py",
         ]

@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'">
+<title>AI作業レポート</title>
+<style>
+@page { size: A4 portrait; margin: 20mm 18mm 16mm; }
+:root {
+  --ink: #231815;
+  --sub: #655E5B;
+  --line: #E7DEDA;
+  --soft: #FAF8F6;
+  --chapter: #F2EFEC;
+  --red: #C7161D;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--chapter); color: var(--ink); counter-reset: chapter;
+  font: 9.6pt/1.63 "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif;
+  print-color-adjust: exact; -webkit-print-color-adjust: exact;
+}
+h1, h2, h3, p, figure, ol { margin: 0; }
+h1, h2, h3 { line-height: 1.35; font-weight: 900; }
+h2 { font-size: 21pt; margin-bottom: 4mm; }
+h3 { font-size: 11pt; margin: 4mm 0 1mm; }
+h2, h3, figcaption { break-after: avoid; }
+code { font-family: ui-monospace, monospace; }
+.num, .score-num, .pctnum, .page::before { font-family: Inter, -apple-system, sans-serif; font-variant-numeric: tabular-nums; }
+.page {
+  width: min(210mm, 100%); min-height: 297mm; margin: 7mm auto;
+  padding: 20mm 18mm 16mm; background: #fff; position: relative; counter-increment: chapter;
+}
+.page::before {
+  content: counter(chapter, decimal-leading-zero); position: absolute; top: 10mm; right: 18mm;
+  color: var(--chapter); font-size: 62pt; font-weight: 800; line-height: 1; pointer-events: none;
+}
+.page > :not(.pagefoot) { position: relative; }
+.pagehead { margin-bottom: 4mm; color: var(--sub); font-size: 8.5pt; letter-spacing: .08em; }
+.pagehead .t::before {
+  content: ""; display: inline-block; vertical-align: .27em; width: 6mm; height: 1px;
+  background: var(--ink); margin-right: 2mm;
+}
+.pagefoot { display: none; }
+.lead, .intro { color: var(--sub); margin-bottom: 5mm; }
+.note { font-size: 8pt; color: var(--sub); line-height: 1.55; margin: 3mm 0; overflow-wrap: anywhere; }
+table { width: 100%; border-collapse: collapse; margin: 2mm 0 4mm; }
+th, td { padding: 1.6mm 2mm; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+thead { display: table-header-group; }
+thead th { border-bottom: 1.4pt solid var(--ink); font-size: 8.5pt; }
+tr { break-inside: avoid; }
+
+.cover h1 { font-size: clamp(28pt, 7vw, 40pt); line-height: 1.18; margin: 24mm 0 5mm; letter-spacing: .02em; }
+.cover-date { border-top: 1px solid var(--line); margin-top: 12mm; padding-top: 3mm; font-size: 8.5pt; color: var(--sub); }
+.scorerow {
+  display: grid; grid-template-columns: minmax(0, 48mm) minmax(0, 1fr); gap: 8mm;
+  align-items: center; border-top: 1.3pt solid var(--ink); border-bottom: 1px solid var(--line); padding: 6mm 0;
+}
+.scorebox .cap { font-size: 8.5pt; font-weight: 700; }
+.score-ring { width: 38mm; position: relative; margin: 2mm 0 3mm; }
+.score-ring svg { display: block; width: 100%; fill: none; stroke: var(--line); stroke-width: 4; }
+.score-ring .progress { stroke: var(--ink); transform: rotate(-90deg); transform-origin: 60px 60px; }
+.score-ring > div { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; }
+.score-num { font-size: 35pt; line-height: 1; font-weight: 850; }
+.of, .judged, .withheld-note { font-size: 8pt; color: var(--sub); }
+.now { font-weight: 800; margin-bottom: 1mm; }
+figcaption { font-weight: 800; margin-bottom: 1mm; }
+.pillars { margin: 0; }
+.pillars th { font-size: 9pt; white-space: nowrap; padding-left: 0; }
+.pillars td { vertical-align: middle; }
+.pillars .barcell { width: 100%; }
+.track { background: var(--line); height: 2.5mm; }
+.track > div { background: var(--ink); height: 100%; }
+.insufficient .fill { background: repeating-linear-gradient(135deg, var(--sub) 0 1px, var(--line) 1px 3px); }
+.pt { white-space: nowrap; font-size: 8pt; }
+.pctnum { display: block; font-size: 7.5pt; color: var(--sub); }
+.withheld-note { margin: 2mm 0; }
+
+.next3 { list-style: none; padding: 0; margin-top: 9mm; display: grid; gap: 5mm; }
+.next3 li {
+  display: grid; grid-template-columns: 15mm 1fr; gap: 6mm; align-items: start; break-inside: avoid;
+  border: 1px solid var(--line); border-top: 1.2pt solid var(--red); background: var(--soft); padding: 6mm;
+}
+.next3 .n { font-size: 23pt; color: var(--red); line-height: 1; font-weight: 850; }
+.next3 b { font-size: 13pt; }
+.next3 p { color: var(--sub); font-size: 8pt; margin-top: 2mm; }
+.prompt-example { margin-top: 3mm; padding-top: 2mm; border-top: 1px solid var(--line); }
+.prompt-example span { font-size: 8pt; font-weight: 700; color: var(--sub); }
+.prompt-example blockquote { margin: 1mm 0 0; font-size: 9pt; line-height: 1.6; }
+
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--ink); border-bottom: 1px solid var(--line); }
+.kpi { padding: 3mm 2mm; }
+.kpi + .kpi { border-left: 1px solid var(--line); }
+.kpi .k, .auto .k { font-size: 8pt; color: var(--sub); }
+.kpi .v, .auto .v { font-size: 17pt; line-height: 1.3; font-weight: 800; }
+.kpi .u, .auto .u, .kpi .d { font-size: 8pt; color: var(--sub); }
+.chart { margin: 5mm 0; break-inside: avoid; }
+.chart .cap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1mm 3mm; font-size: 8.5pt; }
+.chart svg { display: block; width: 100%; height: 32mm; margin-top: 1mm; }
+.chart .bar { fill: var(--ink); }
+.chart .bar.zero { fill: var(--line); }
+.chart .axis, .chart .grid { stroke: var(--line); }
+.chart .grid { stroke-dasharray: 3 3; }
+.chart text { fill: var(--sub); font-size: 9px; }
+.breadth { display: grid; grid-template-columns: 1.4fr 1fr; gap: 8mm; }
+.brow { display: grid; grid-template-columns: 24mm 1fr auto; gap: 2mm; align-items: center; font-size: 8pt; margin-bottom: 1.5mm; }
+.auto { display: grid; grid-template-columns: 1fr 1fr; gap: 2mm; }
+
+.pillar-head { display: flex; justify-content: space-between; padding: 2mm 0; color: var(--sub); border-top: 1px solid var(--line); }
+.items { table-layout: fixed; font-size: 9pt; }
+.items .mk { width: 9mm; text-align: center; padding-left: 0; }
+.items .mk span {
+  display: inline-grid; place-items: center; width: 5.5mm; height: 5.5mm; border: 1px solid var(--ink);
+  border-radius: 50%; font-size: 9pt; font-weight: 800;
+}
+.items .pass .mk span { background: var(--ink); color: #fff; }
+.items .unmeasured .mk span { border-style: dashed; color: var(--sub); }
+.items .judge { width: 32mm; font-size: 8pt; color: var(--sub); }
+.items .note { width: 39mm; font-size: 8pt; color: var(--ink); }
+.items .reason-row td { padding-top: 0; }
+.items tbody.item { break-inside: avoid; }
+.items .reason { font-size: 8pt; line-height: 1.55; color: var(--sub); overflow-wrap: anywhere; }
+.items tr:has(+ .reason-row) td { border-bottom: 0; }
+.statgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2mm; }
+.statgrid .card { background: var(--soft); border-top: 1px solid var(--ink); padding: 2.5mm; break-inside: avoid; }
+.statgrid .label { font-size: 8pt; color: var(--sub); }
+.blindspots { padding-left: 5mm; }
+.blindspots li { margin: 1.8mm 0; }
+.shown-names { font-weight: 800; }
+
+.catalog-group h3 { margin: 3mm 0 0; }
+.catalog-group p { color: var(--sub); font-size: 8pt; }
+.catalog-table { font-size: 9pt; margin: 1mm 0 2mm; }
+.catalog-table th, .catalog-table td { padding: 1.25mm 2mm; }
+.catalog-table tbody th { width: 38mm; font-weight: 600; }
+
+.tree-diagram { border-top: 1.2pt solid var(--ink); }
+.folder-tree, .folder-tree ul { list-style: none; padding: 0; margin: 0; }
+.folder-tree > li + li { margin-top: 3mm; padding-top: 2mm; border-top: 1px solid var(--line); }
+.folder-tree ul { margin-left: 4mm; border-left: 1px solid var(--sub); padding-left: 5mm; }
+.folder-tree li { position: relative; padding-top: 1mm; }
+.folder-tree ul > li::before { content: ""; position: absolute; top: 4.5mm; left: -5mm; width: 5mm; border-top: 1px solid var(--sub); }
+.tree-node {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .5mm 4mm;
+  padding: .7mm 2mm; background: var(--soft); border: 1px solid var(--line); break-inside: avoid;
+}
+.tree-node b { min-width: 23mm; }
+.tree-node span { color: var(--sub); font-size: 8pt; }
+.folder-tree > li > .tree-node { background: var(--ink); color: #fff; }
+.folder-tree > li > .tree-node span { color: #fff; }
+
+@media screen and (max-width: 650px) {
+  .page { min-height: auto; margin: 0 auto 3mm; padding: 10mm 5mm; }
+  .page::before { top: 3mm; right: 5mm; font-size: 42pt; }
+  .cover h1 { margin-top: 13mm; }
+  .scorerow, .breadth { grid-template-columns: 1fr; gap: 4mm; }
+  .items .judge, .items .note { width: 19%; overflow-wrap: anywhere; }
+  .next3 li { grid-template-columns: 10mm 1fr; gap: 3mm; padding: 4mm; }
+  .kpis, .statgrid { grid-template-columns: 1fr 1fr; }
+}
+@media print {
+  body { background: #fff; }
+  .page { width: auto; min-height: 0; margin: 0; padding: 0; break-before: page; }
+  .page:first-child { break-before: auto; }
+  .page::before { top: 0; right: 0; }
+  .cover h1 { font-size: 40pt; }
+}
+</style>
+</head>
+<body>
+<section class="page cover">
+<header class="pagehead"><span class="t">ハーネス点検</span></header>
+<h1>AI作業レポート</h1>
+<p class="intro">ハーネス＝AIの周りに置く設定・指示・道具の一式。<br>見ているのはPCに残る設定と記録だけ。チャット画面での利用は数えていない。</p>
+<h2>結果</h2>
+<div class="scorerow">
+<div class="scorebox"><div class="cap">点数</div><div class="score-ring"><svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="55"/><circle class="progress" cx="60" cy="60" r="55" pathLength="100" stroke-dasharray="52 100"/></svg><div><span class="score-num num">52</span><span class="of">/ 100点</span></div></div>
+  <div class="now">土台は強く、安全、育つ仕組みが薄い型</div>
+  <div class="judged">全20項目中18項目を判定</div></div>
+<figure aria-label="4本の柱の達成率">
+<figcaption>4本の柱の達成率</figcaption>
+<table class="pillars"><tbody>
+<tr>
+  <th>土台</th>
+  <td class="barcell"><div class="track"><div class="fill" style="width:83%"></div></div></td>
+  <td class="pt"><b>7</b> / 8<span class="pctnum">達成率83%</span></td>
+</tr><tr>
+  <th>安全</th>
+  <td class="barcell"><div class="track"><div class="fill" style="width:25%"></div></div></td>
+  <td class="pt"><b>1</b> / 4<span class="pctnum">達成率25%</span></td>
+</tr><tr>
+  <th>育つ仕組み</th>
+  <td class="barcell"><div class="track"><div class="fill" style="width:33%"></div></div></td>
+  <td class="pt"><b>1</b> / 3<span class="pctnum">達成率33%</span></td>
+</tr><tr>
+  <th>任せ方</th>
+  <td class="barcell"><div class="track"><div class="fill" style="width:67%"></div></div></td>
+  <td class="pt"><b>2</b> / 3<span class="pctnum">達成率67%</span></td>
+</tr>
+</tbody></table>
+</figure>
+</div>
+<p class="note">点数は判定できた項目から計算します。判定が半分未満の柱は集計から外します。使用実績には回数に応じた部分点があるため、達成率が「満たした数／判定できた数」と異なることがあります。</p>
+<p class="cover-date">レポート作成日　2026年11月19日</p>
+</section><section class="page action-page">
+<h2>改善点</h2>
+<ol class="next3"><li><span class="n num">01</span><div><b>コード・設定に直接書かれたキーを環境変数などに移す</b><p>安全 ／ S1</p><div class="prompt-example"><span>たとえばこんなプロンプト</span><blockquote>コードや設定に直接書かれた認証情報を、値を表示せずに探してください。環境変数や秘密情報の管理機能に移す変更案と、キーの再発行が必要な箇所を示してください。</blockquote></div></div></li><li><span class="n num">02</span><div><b>.env 系と鍵・認証情報系の両方を、読ませない設定にする</b><p>安全 ／ S2</p><div class="prompt-example"><span>たとえばこんなプロンプト</span><blockquote>AIが読む範囲の設定を確認し、.env 系のファイルと秘密鍵・認証情報の両方を読み取り対象から外す案を出してください。実際の秘密ファイルは開かず、見本で確認してください。</blockquote></div></div></li><li><span class="n num">03</span><div><b>消す・強制上書き・外へ出す操作を、すべて承認制か禁止にする</b><p>安全 ／ S3</p><div class="prompt-example"><span>たとえばこんなプロンプト</span><blockquote>削除・強制上書き・外部送信に関する許可設定を確認してください。操作の種類ごとに、実行前の承認を必須にするか禁止する変更案を示してください。</blockquote></div></div></li></ol>
+</section><section class="page">
+<h2>直近30日の使用履歴</h2>
+<p class="lead">今月の使用量と、直近30日の利用記録を集計しています。</p>
+<div class="kpis"><div class="kpi"><div class="k">今月使った時間（2026-11）</div><div class="v num">19.2<span class="u">時間</span></div><div class="d">Claude Code 17.2／Codex 2.1</div></div><div class="kpi"><div class="k">今月のトークン（入力＋出力）</div><div class="v num">919.0万</div><div class="d">キャッシュ読み16.5億・書き3295.9万</div></div><div class="kpi"><div class="k">直近30日に AI が動いた回数</div><div class="v num">5,835<span class="u">回</span></div><div class="d">道具の呼び出しの合計</div></div><div class="kpi"><div class="k">人を挟まず続いた最長</div><div class="v num">170<span class="u">回</span></div><div class="d">道具の呼び出しの連続</div></div></div><div class="chart"><div class="cap"><span>直近30日の日別の使用時間（Claude Code）</span><span>使った日 <b class="num">3</b> / 30日・始めた会話 <b class="num">142</b>件</span></div><svg viewBox="0 0 600 110" preserveAspectRatio="none" role="img" aria-label="直近30日の日別の使用時間"><line class="grid" x1="0" y1="14.0" x2="600.0" y2="14.0"/><text x="600.0" y="11.0" text-anchor="end">最大 11.3時間</text><line class="axis" x1="0" y1="94.0" x2="600.0" y2="94.0"/><rect class="bar zero" x="3.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="23.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="43.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="63.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="83.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="103.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="123.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="143.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="163.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="183.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="203.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="223.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="243.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="263.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="283.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="303.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="323.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="343.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="363.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="383.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="403.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="423.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="443.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="463.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="483.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="503.4" y="92.5" width="13.2" height="1.5"/><rect class="bar zero" x="523.4" y="92.5" width="13.2" height="1.5"/><rect class="bar" x="543.4" y="81.2" width="13.2" height="12.8" rx="1.5"/><rect class="bar" x="563.4" y="14.0" width="13.2" height="80.0" rx="1.5"/><rect class="bar" x="583.4" y="64.8" width="13.2" height="29.2" rx="1.5"/><text x="1.0" y="107.0" text-anchor="start">10-21</text><text x="310.0" y="107.0" text-anchor="middle">11-05</text><text x="599.0" y="107.0" text-anchor="end">11-19</text></svg></div><div class="breadth"><div><div class="chart"><div class="cap"><span>直近30日に使われているもの／眠っているもの</span></div></div><div class="brow"><span class="bl">スキル</span><div class="track"><div class="used" style="width:100%"></div></div><span class="bn">使用 <b class="num">3</b> / 3本</span></div><div class="brow"><span class="bl">エージェント</span><div class="track"><div class="used" style="width:0%"></div></div><span class="bn">使用 <b class="num">0</b> / 0件</span></div><div class="brow"><span class="bl">コネクタ</span><div class="track"><div class="used" style="width:100%"></div></div><span class="bn">使用 <b class="num">9</b> / 9個</span></div></div><div><div class="chart"><div class="cap"><span>人を挟まず任せて動いた会話（直近30日）</span></div></div><div class="auto"><div class="a"><div class="k">20回以上続いた会話</div><div class="v num">50<span class="u">件</span></div></div><div class="a"><div class="k">エージェントの連携</div><div class="v num">0<span class="u">件</span></div></div></div></div></div>
+</section><section class="page">
+<header class="pagehead"><span class="t">各判定基準の詳細</span></header>
+<h2>土台</h2>
+<div class="pillar-block">
+<div class="pillar-head"><span>該当数 ／ 判定数</span><span class="rate"><b>7</b> / 8（83点）</span></div>
+<table class="items">
+<thead><tr><th class="mk"></th><th class="name">項目</th><th class="judge">判定の種類</th><th class="note">結果</th></tr></thead>
+<tbody class="item"><tr class="pass">
+  <td class="mk"><span>○</span></td>
+  <td class="name">F1　作業フォルダに指示書がある</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしている</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、作業フォルダからGitの一番上のフォルダまでに指示書が1件あり、1件以上という基準を満たしています。Codexでは、作業フォルダからGitの一番上のフォルダまでに指示書が1件あり、1件以上という基準を満たしています。</td></tr></tbody><tbody class="item"><tr class="pass">
+  <td class="mk"><span>○</span></td>
+  <td class="name">F2　毎回読まれる指示ファイルが、どれも長すぎない</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしている</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、毎回読まれる指示ファイルが1件あり、いちばん長いものは3行で、どれも200行未満という目安に収まっています。Codexでは、読まれる指示書が1件で合計11382バイトあり、合計32768バイト未満という目安に収まっています。</td></tr></tbody><tbody class="item"><tr class="pass">
+  <td class="mk"><span>○</span></td>
+  <td class="name">F3　指示が具体的で、守れたか確かめられるか</td>
+  <td class="judge">AIの判断</td>
+  <td class="note">満たしている</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、作業フォルダの指示書1件をAIが2回読み、2回とも、指示が具体的で、守れたか確かめられる書き方になっていると判定しました。Codexでは、作業フォルダの指示書1件をAIが2回読み、2回とも、指示が具体的で、守れたか確かめられる書き方になっていると判定しました。</td></tr></tbody><tbody class="item"><tr class="pass">
+  <td class="mk"><span>○</span></td>
+  <td class="name">F4　矛盾する指示がない</td>
+  <td class="judge">AIの判断</td>
+  <td class="note">満たしている</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、起動時に読まれる指示ファイル1件をAIが2回読み、2回とも、互いに矛盾する指示は無いと判定しました。Codexでは、起動時に読まれる指示ファイル1件をAIが2回読み、2回とも、互いに矛盾する指示は無いと判定しました。</td></tr></tbody><tbody class="item"><tr class="pass">
+  <td class="mk"><span>○</span></td>
+  <td class="name">F6　自分で用意したスキルが、直近30日に1回以上使われた</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしている（11回・段階2/3）</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、直近30日に、自分で用意したスキル3本のうち3本が合計11回使われ、1回以上という基準を満たしています。Codexでは、この項目を会話の記録から確かめる方法が無いため、判定できませんでした。</td></tr></tbody><tbody class="item"><tr class="pass">
+  <td class="mk"><span>○</span></td>
+  <td class="name">F7　スキルの説明文に「何をするか」と「いつ使うか」がある</td>
+  <td class="judge">AIの判断</td>
+  <td class="note">満たしている</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、自分で用意したスキルの説明文3件をAIが2回読み、2回とも、どれにも「何をするか」と「いつ使うか」が書かれていると判定しました。Codexでは、自分で用意したスキルの説明文3件をAIが2回読み、2回とも、どれにも「何をするか」と「いつ使うか」が書かれていると判定しました。</td></tr></tbody><tbody class="item"><tr class="fail">
+  <td class="mk"><span>×</span></td>
+  <td class="name">F9　自分で定義したエージェントが、直近30日に1回以上使われた</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしていない（0回・段階0）</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、自分で定義したエージェントが0件のため、直近30日に1回以上という基準を満たしていません。Codexでは、この項目を会話の記録から確かめる方法が無いため、判定できませんでした。</td></tr></tbody><tbody class="item"><tr class="pass">
+  <td class="mk"><span>○</span></td>
+  <td class="name">F11　コネクタが、直近30日に1回以上使われた</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしている（345回・段階満点）</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、直近30日に、コネクタの呼び出しが345回あり、1回以上という基準を満たしています。Codexでは、直近30日に読めた会話の記録37件の中に、コネクタの呼び出しは無く、1回以上という基準を満たしていません。</td></tr></tbody>
+</table>
+</div>
+<p class="note">○＝満たしている／×＝満たしていない／―＝測定できず。判定の種類は「機械」「AIの判断」「機械＋AIの判断」「機械＋本人の回答」のいずれか。</p>
+<footer class="pagefoot">土台</footer>
+</section><section class="page">
+<header class="pagehead"><span class="t">各判定基準の詳細</span></header>
+<h2>安全</h2>
+<div class="pillar-block">
+<div class="pillar-head"><span>該当数 ／ 判定数</span><span class="rate"><b>1</b> / 4（25点）</span></div>
+<table class="items">
+<thead><tr><th class="mk"></th><th class="name">項目</th><th class="judge">判定の種類</th><th class="note">結果</th></tr></thead>
+<tbody class="item"><tr class="fail">
+  <td class="mk"><span>×</span></td>
+  <td class="name">S1　よくある形のキーが、コードや設定に直接書かれていない</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしていない</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">作業フォルダのGit管理下のファイル70個と設定ファイル2個を調べ、よくある形のキーらしい文字列が8件（作業フォルダ8件、設定ファイル0件）あり、0件という基準を満たしていません。</td></tr></tbody><tbody class="item"><tr class="fail">
+  <td class="mk"><span>×</span></td>
+  <td class="name">S2　秘密ファイル（.env 系と鍵・認証情報系）を読ませない設定がある</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしていない</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、秘密ファイルの読み取りのうち、環境変数のファイル系を止めていないため、2系統すべてという基準を満たしていません。Codexでは、この項目を設定から確かめる方法が無いため、判定できませんでした。</td></tr></tbody><tbody class="item"><tr class="fail">
+  <td class="mk"><span>×</span></td>
+  <td class="name">S3　取り返しのつかない操作（消す・強制上書き・外へ出す）が、すべて承認制か禁止になっている</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしていない</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、取り返しのつかない操作のうち、消す操作、強制上書き、外へ出す操作を止めていないため、3系統すべてという基準を満たしていません。Codexでは、承認の方式や実行モードを判定できる設定が見つからなかったため、判定できませんでした。</td></tr></tbody><tbody class="item"><tr class="pass">
+  <td class="mk"><span>○</span></td>
+  <td class="name">S4　既定のモードが「全部許す」になっていない</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしている</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、既定のモードの指定は無く、確認をすべて省くモードではないため、基準を満たしています。Codexでは、承認の方式や実行モードを判定できる設定が見つからなかったため、判定できませんでした。</td></tr></tbody>
+</table>
+</div>
+<p class="note">○＝満たしている／×＝満たしていない／―＝測定できず。判定の種類は「機械」「AIの判断」「機械＋AIの判断」「機械＋本人の回答」のいずれか。</p>
+<footer class="pagefoot">安全</footer>
+</section><section class="page">
+<header class="pagehead"><span class="t">各判定基準の詳細</span></header>
+<h2>育つ仕組み</h2>
+<div class="pillar-block">
+<div class="pillar-head"><span>該当数 ／ 判定数</span><span class="rate"><b>1</b> / 3（33点）</span></div>
+<table class="items">
+<thead><tr><th class="mk"></th><th class="name">項目</th><th class="judge">判定の種類</th><th class="note">結果</th></tr></thead>
+<tbody class="item"><tr class="pass">
+  <td class="mk"><span>○</span></td>
+  <td class="name">G1　指示書がGitで管理され、リモートにもある</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしている</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">作業フォルダはGitで管理され、リモートがあり、指示書もGitの管理下にあるため、基準を満たしています。</td></tr></tbody><tbody class="item"><tr class="fail">
+  <td class="mk"><span>×</span></td>
+  <td class="name">G2　個人用と共有用の指示が分かれている</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしていない</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">全体用の指示書に中身が無く、個人用の上書きファイルも無いため、基準を満たしていません。</td></tr></tbody><tbody class="item"><tr class="fail">
+  <td class="mk"><span>×</span></td>
+  <td class="name">G3　人が書かなくても、記録が残る仕組みがある</td>
+  <td class="judge">機械＋AIの判断</td>
+  <td class="note">満たしていない</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">終わりや区切りで動くフック5件と定時実行0件の中身をAIが2回読み、2回とも、記録を残す仕組みではないと判定しました。</td></tr></tbody>
+</table>
+</div>
+<p class="note">○＝満たしている／×＝満たしていない／―＝測定できず。判定の種類は「機械」「AIの判断」「機械＋AIの判断」「機械＋本人の回答」のいずれか。</p>
+<footer class="pagefoot">育つ仕組み</footer>
+</section><section class="page">
+<header class="pagehead"><span class="t">各判定基準の詳細</span></header>
+<h2>任せ方</h2>
+<div class="pillar-block">
+<div class="pillar-head"><span>該当数 ／ 判定数</span><span class="rate"><b>2</b> / 3（67点）</span></div>
+<table class="items">
+<thead><tr><th class="mk"></th><th class="name">項目</th><th class="judge">判定の種類</th><th class="note">結果</th></tr></thead>
+<tbody class="item"><tr class="fail">
+  <td class="mk"><span>×</span></td>
+  <td class="name">D1　いつもの安全な操作は、確認なしで通る</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしていない</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、許可の設定が無く、既定のモードも自動で判断するモードではないため、基準を満たしていません。Codexでは、承認の方式や実行モードを判定できる設定が見つからなかったため、判定できませんでした。</td></tr></tbody><tbody class="item"><tr class="unmeasured">
+  <td class="mk"><span>―</span></td>
+  <td class="name">D2　繰り返す仕事が、人が起動しなくても始まり、直近30日に動いた</td>
+  <td class="judge">機械＋本人の回答</td>
+  <td class="note">測定できず</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、定時実行の定義が見つからなかったため、判定できませんでした。Codexでは、定時実行の定義が見つからなかったため、判定できませんでした。</td></tr></tbody><tbody class="item"><tr class="pass">
+  <td class="mk"><span>○</span></td>
+  <td class="name">D3　終わる前の確認を、仕組みがやっている</td>
+  <td class="judge">機械＋AIの判断</td>
+  <td class="note">満たしている</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、終了時に動くフックが4件、読むだけの確認役のエージェントが0件で、どちらか1件以上という基準を満たしています。Codexでは、終了時に動くフックがあり、1件以上という基準を満たしています。</td></tr></tbody><tbody class="item"><tr class="unmeasured">
+  <td class="mk"><span>―</span></td>
+  <td class="name">D4　役割の違うエージェントが、人を挟まずに続けて動いた記録が1件以上ある</td>
+  <td class="judge">機械</td>
+  <td class="note">測定できず</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、自分で定義したエージェントが無いため、判定できませんでした。Codexでは、この項目を会話の記録から確かめる方法が無いため、判定できませんでした。</td></tr></tbody><tbody class="item"><tr class="pass">
+  <td class="mk"><span>○</span></td>
+  <td class="name">D5　人の発言を挟まずに、20回以上続けて動いた会話が1件以上ある</td>
+  <td class="judge">機械</td>
+  <td class="note">満たしている</td>
+</tr><tr class="reason-row"><td></td><td colspan="3" class="reason">Claude Codeでは、直近30日の会話で、人の発言を挟まずに続いた道具の呼び出しは最長170回で、20回以上という基準を満たしています。Codexでは、直近30日に読めた会話の記録37件の中で、人の発言を挟まずに続いた道具の呼び出しは最長48回で、20回以上という基準を満たしています。</td></tr></tbody>
+</table>
+</div>
+<p class="note">○＝満たしている／×＝満たしていない／―＝測定できず。判定の種類は「機械」「AIの判断」「機械＋AIの判断」「機械＋本人の回答」のいずれか。</p>
+<footer class="pagefoot">任せ方</footer>
+</section><section class="page catalog">
+<h2>スキル・エージェント一覧</h2>
+<p class="lead">プラグインはキャッシュにある定義を版ごとに数えています。用途は定義の説明文から推定しています。</p>
+<div class="catalog-group"><h3>Claude Code ／ 個人</h3><p>スキル 3件　エージェント 0件</p><table class="counttable catalog-table"><thead><tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th></tr></thead><tbody><tr><th scope="row">スキル 1</th><td>並行する作業を管理し、結果を取りまとめる</td></tr>
+<tr><th scope="row">スキル 2</th><td>アプリやブラウザの画面を操作する</td></tr>
+<tr><th scope="row">スキル 3</th><td>並行する作業を管理し、結果を取りまとめる</td></tr></tbody></table></div><div class="catalog-group"><h3>Claude Code ／ 書庫（作業フォルダ）</h3><p>スキル 0件　エージェント 0件</p></div><div class="catalog-group"><h3>Claude Code ／ プラグインキャッシュ</h3><p>スキル 0件　エージェント 0件</p></div><div class="catalog-group"><h3>Codex ／ 個人</h3><p>スキル 3件　エージェント 0件</p><table class="counttable catalog-table"><thead><tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th></tr></thead><tbody><tr><th scope="row">スキル 1</th><td>並行する作業を管理し、結果を取りまとめる</td></tr>
+<tr><th scope="row">スキル 2</th><td>アプリやブラウザの画面を操作する</td></tr>
+<tr><th scope="row">スキル 3</th><td>並行する作業を管理し、結果を取りまとめる</td></tr></tbody></table></div><div class="catalog-group"><h3>Codex ／ 書庫（作業フォルダ）</h3><p>スキル 0件　エージェント 0件</p></div>
+</section><section class="page catalog">
+<h2>スキル・エージェント一覧（続き）</h2>
+<p class="lead">プラグインはキャッシュにある定義を版ごとに数えています。用途は定義の説明文から推定しています。</p>
+<div class="catalog-group"><h3>Codex ／ プラグインキャッシュ</h3><p>スキル 143件　エージェント 3件</p><table class="counttable catalog-table"><thead><tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th></tr></thead><tbody><tr><th scope="row">スキル 1</th><td>画像や図を作成したり編集したりする</td></tr>
+<tr><th scope="row">スキル 2</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 3</th><td>アプリやブラウザの画面を操作する</td></tr>
+<tr><th scope="row">スキル 4</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 5</th><td>成果物や設定を確認し、問題点を見つける</td></tr>
+<tr><th scope="row">スキル 6</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 7</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 8</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 9</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 10</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 11</th><td>成果物や設定を確認し、問題点を見つける</td></tr>
+<tr><th scope="row">スキル 12</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 13</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 14</th><td>成果物や設定を確認し、問題点を見つける</td></tr>
+<tr><th scope="row">スキル 15</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 16</th><td>成果物や設定を確認し、問題点を見つける</td></tr>
+<tr><th scope="row">スキル 17</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 18</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 19</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 20</th><td>成果物や設定を確認し、問題点を見つける</td></tr>
+<tr><th scope="row">スキル 21</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 22</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 23</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 24</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 25</th><td>コードの実装や検証を支援する</td></tr></tbody></table></div>
+</section><section class="page catalog">
+<h2>スキル・エージェント一覧（続き）</h2>
+<p class="lead">プラグインはキャッシュにある定義を版ごとに数えています。用途は定義の説明文から推定しています。</p>
+<div class="catalog-group"><h3>Codex ／ プラグインキャッシュ（続き）</h3><p>スキル 143件　エージェント 3件</p><table class="counttable catalog-table"><thead><tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th></tr></thead><tbody><tr><th scope="row">スキル 26</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 27</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 28</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 29</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 30</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 31</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 32</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 33</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 34</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 35</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 36</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 37</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 38</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 39</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 40</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 41</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 42</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 43</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 44</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 45</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 46</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 47</th><td>画像や図を作成したり編集したりする</td></tr>
+<tr><th scope="row">スキル 48</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 49</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 50</th><td>用途を判別できませんでした</td></tr></tbody></table></div>
+</section><section class="page catalog">
+<h2>スキル・エージェント一覧（続き）</h2>
+<p class="lead">プラグインはキャッシュにある定義を版ごとに数えています。用途は定義の説明文から推定しています。</p>
+<div class="catalog-group"><h3>Codex ／ プラグインキャッシュ（続き）</h3><p>スキル 143件　エージェント 3件</p><table class="counttable catalog-table"><thead><tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th></tr></thead><tbody><tr><th scope="row">スキル 51</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 52</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 53</th><td>表や数値を扱い、集計や分析を行う</td></tr>
+<tr><th scope="row">スキル 54</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 55</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 56</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 57</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 58</th><td>情報を探して整理する</td></tr>
+<tr><th scope="row">スキル 59</th><td>情報を探して整理する</td></tr>
+<tr><th scope="row">スキル 60</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 61</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 62</th><td>情報を探して整理する</td></tr>
+<tr><th scope="row">スキル 63</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 64</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 65</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 66</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 67</th><td>表や数値を扱い、集計や分析を行う</td></tr>
+<tr><th scope="row">スキル 68</th><td>成果物や設定を確認し、問題点を見つける</td></tr>
+<tr><th scope="row">スキル 69</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 70</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 71</th><td>表や数値を扱い、集計や分析を行う</td></tr>
+<tr><th scope="row">スキル 72</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 73</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 74</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 75</th><td>文書や資料の作成や編集を支援する</td></tr></tbody></table></div>
+</section><section class="page catalog">
+<h2>スキル・エージェント一覧（続き）</h2>
+<p class="lead">プラグインはキャッシュにある定義を版ごとに数えています。用途は定義の説明文から推定しています。</p>
+<div class="catalog-group"><h3>Codex ／ プラグインキャッシュ（続き）</h3><p>スキル 143件　エージェント 3件</p><table class="counttable catalog-table"><thead><tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th></tr></thead><tbody><tr><th scope="row">スキル 76</th><td>表や数値を扱い、集計や分析を行う</td></tr>
+<tr><th scope="row">スキル 77</th><td>成果物や設定を確認し、問題点を見つける</td></tr>
+<tr><th scope="row">スキル 78</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 79</th><td>表や数値を扱い、集計や分析を行う</td></tr>
+<tr><th scope="row">スキル 80</th><td>表や数値を扱い、集計や分析を行う</td></tr>
+<tr><th scope="row">スキル 81</th><td>画像や図を作成したり編集したりする</td></tr>
+<tr><th scope="row">スキル 82</th><td>画像や図を作成したり編集したりする</td></tr>
+<tr><th scope="row">スキル 83</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 84</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 85</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 86</th><td>表や数値を扱い、集計や分析を行う</td></tr>
+<tr><th scope="row">スキル 87</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 88</th><td>成果物や設定を確認し、問題点を見つける</td></tr>
+<tr><th scope="row">スキル 89</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 90</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 91</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 92</th><td>成果物や設定を確認し、問題点を見つける</td></tr>
+<tr><th scope="row">スキル 93</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 94</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 95</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 96</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 97</th><td>アプリやブラウザの画面を操作する</td></tr>
+<tr><th scope="row">スキル 98</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 99</th><td>画像や図を作成したり編集したりする</td></tr>
+<tr><th scope="row">スキル 100</th><td>用途を判別できませんでした</td></tr></tbody></table></div>
+</section><section class="page catalog">
+<h2>スキル・エージェント一覧（続き）</h2>
+<p class="lead">プラグインはキャッシュにある定義を版ごとに数えています。用途は定義の説明文から推定しています。</p>
+<div class="catalog-group"><h3>Codex ／ プラグインキャッシュ（続き）</h3><p>スキル 143件　エージェント 3件</p><table class="counttable catalog-table"><thead><tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th></tr></thead><tbody><tr><th scope="row">スキル 101</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 102</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 103</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 104</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 105</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 106</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 107</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 108</th><td>情報を探して整理する</td></tr>
+<tr><th scope="row">スキル 109</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 110</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 111</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 112</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 113</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 114</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 115</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 116</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 117</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 118</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 119</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 120</th><td>コードの実装や検証を支援する</td></tr>
+<tr><th scope="row">スキル 121</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 122</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 123</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 124</th><td>画像や図を作成したり編集したりする</td></tr>
+<tr><th scope="row">スキル 125</th><td>コードの実装や検証を支援する</td></tr></tbody></table></div>
+</section><section class="page catalog">
+<h2>スキル・エージェント一覧（続き）</h2>
+<p class="lead">プラグインはキャッシュにある定義を版ごとに数えています。用途は定義の説明文から推定しています。</p>
+<div class="catalog-group"><h3>Codex ／ プラグインキャッシュ（続き）</h3><p>スキル 143件　エージェント 3件</p><table class="counttable catalog-table"><thead><tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th></tr></thead><tbody><tr><th scope="row">スキル 126</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 127</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 128</th><td>アプリやブラウザの画面を操作する</td></tr>
+<tr><th scope="row">スキル 129</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 130</th><td>画像や図を作成したり編集したりする</td></tr>
+<tr><th scope="row">スキル 131</th><td>画像や図を作成したり編集したりする</td></tr>
+<tr><th scope="row">スキル 132</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 133</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 134</th><td>情報を探して整理する</td></tr>
+<tr><th scope="row">スキル 135</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 136</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">スキル 137</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">スキル 138</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 139</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 140</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">スキル 141</th><td>表や数値を扱い、集計や分析を行う</td></tr>
+<tr><th scope="row">スキル 142</th><td>画像や図を作成したり編集したりする</td></tr>
+<tr><th scope="row">スキル 143</th><td>文書や資料の作成や編集を支援する</td></tr>
+<tr><th scope="row">エージェント 1</th><td>繰り返し行う作業を自動化する</td></tr>
+<tr><th scope="row">エージェント 2</th><td>用途を判別できませんでした</td></tr>
+<tr><th scope="row">エージェント 3</th><td>画像や図を作成したり編集したりする</td></tr></tbody></table></div>
+</section><section class="page">
+<h2>フォルダの構成</h2>
+<p class="lead">仮の名前で最大3階層を示します。数字は直下の件数です。直下の項目が多い場合は内訳を省略します。</p>
+<figure class="tree-diagram" aria-label="点検したフォルダの構成図">
+<ul class="folder-tree"><li><div class="tree-node"><b>作業フォルダ</b><span>ファイル 14件・フォルダ 5件</span></div><ul><li><div class="tree-node"><b>フォルダ 1</b><span>ファイル 6件・フォルダ 0件</span></div></li><li><div class="tree-node"><b>フォルダ 2</b><span>ファイル 2件・フォルダ 0件</span></div></li><li><div class="tree-node"><b>フォルダ 3</b><span>ファイル 4件・フォルダ 0件</span></div></li><li><div class="tree-node"><b>フォルダ 4</b><span>ファイル 1件・フォルダ 0件</span></div></li><li><div class="tree-node"><b>フォルダ 5</b><span>ファイル 17件・フォルダ 1件</span></div><ul><li><div class="tree-node"><b>フォルダ 1</b><span>ファイル 2件・フォルダ 9件</span></div><ul><li><div class="tree-node"><b>フォルダ 1</b><span>ファイル 1件・フォルダ 4件・内訳省略</span></div></li><li><div class="tree-node"><b>フォルダ 2</b><span>ファイル 3件・フォルダ 5件・内訳省略</span></div></li><li><div class="tree-node"><b>フォルダ 3</b><span>ファイル 1件・フォルダ 0件</span></div></li><li><div class="tree-node"><b>フォルダ 4</b><span>ファイル 3件・フォルダ 2件・内訳省略</span></div></li><li><div class="tree-node"><b>フォルダ 5</b><span>ファイル 0件・フォルダ 1件・内訳省略</span></div></li><li><div class="tree-node"><b>フォルダ 6</b><span>ファイル 0件・フォルダ 1件・内訳省略</span></div></li><li><div class="tree-node"><b>フォルダ 7</b><span>ファイル 1件・フォルダ 2件・内訳省略</span></div></li><li><div class="tree-node"><b>フォルダ 8</b><span>ファイル 2件・フォルダ 0件</span></div></li><li><div class="tree-node"><b>フォルダ 9</b><span>ファイル 2件・フォルダ 1件・内訳省略</span></div></li></ul></li></ul></li></ul></li><li><div class="tree-node"><b>Claude Code</b><span>ファイル 13件・フォルダ 15件・内訳省略</span></div></li><li><div class="tree-node"><b>Codex</b><span>ファイル 31件・フォルダ 19件・内訳省略</span></div></li></ul>
+</figure>
+<p class="note">リンク先、Gitの内部フォルダ、点検結果の出力先は対象外です。</p>
+</section><section class="page">
+<h2>参考データ</h2>
+<p class="lead">直近30日の使用回数と設定の集計</p>
+<div class="statgrid">
+  <div class="card"><div class="label">毎回読まれる指示の合計行数（Claude Code）</div><div class="value">3行 / 1ファイル</div></div>
+  <div class="card"><div class="label">読まれる AGENTS.md の合計サイズ（Codex）</div><div class="value">11382バイト / 1ファイル</div></div>
+  <div class="card"><div class="label">最長の連続回数（人の発言を挟まず）</div><div class="value">170回</div></div>
+  <div class="card"><div class="label">キーらしき文字列（リポジトリ）</div><div class="value">8件 / 走査 70・読まなかった 0（画像など文字でないもの、1MBを超えるもの）</div></div>
+  <div class="card"><div class="label">キーらしき文字列（設定ファイル）</div><div class="value">0件 / 走査 2</div></div>
+</div>
+<h3>スキル</h3><p>自分で用意したスキル: 3本／うち直近30日に使われた: 3本／使用回数（多い順・名前は出さない。少数の道具に偏っていないかの目安）: 8、2、1</p><h3>エージェント</h3><p>自分で用意したエージェント: 0本／うち直近30日に使われた: 0本</p><h3>コネクタ</h3><p>つながっている数: 9／直近30日の呼び出しの合計: 345</p>
+<p class="note">数え方: 使用回数は会話の記録（直近30日）から数えたもの。キーらしき文字列は種類と件数のみで、値・ファイル名・行番号は出していない。</p>
+
+<footer class="pagefoot">参考</footer>
+</section><section class="page">
+<h2>点検の範囲</h2>
+<ul class="blindspots">
+<li>claude.ai や ChatGPT などの、チャット画面だけでの利用は数えていない（PCに残る記録だけを見ている）。</li>
+<li>Codex の会話の記録は、標準機能で読める形になっていないため、使用実績が要る項目は「測定できず」にしている。</li>
+<li>この点検で検出した道具: Claude Code、Codex。</li>
+<li>キーの走査の限界: よくある形のキー（<code>sk-</code>・<code>AIza</code>等）と、設定ファイルの中の名前でわかるもの（<code>token</code>・<code>secret</code>等）だけを探している。1MBを超えるファイルと、Gitの対象外のファイル（.env等）は見ていない。</li>
+<li>小文字だけの値や、小文字・数字・ハイフンだけの値は、名前や見本とみなして数えない。</li>
+<li>秘密ファイルを読ませない設定（S2）と、取り返しのつかない操作の承認（S3）は、設定の行とフックの中身に、系統ごとの語が書かれているかだけを見ている。フックを実行して、本当に止まるかは試していない。</li>
+<li>直近30日の日別グラフと「使われている／眠っているもの」「任せて動いた量」は、Claude Code の会話の記録だけから作っている。</li>
+<li>今月の使用時間の合計は、Claude Code と Codex の値を単純に足したもの。同時に両方を使っていた時間があれば、その分は重複して数えている。</li>
+<li>Codex のトークンは、会話の記録が圧縮されていて読めない分は足していない（推測で埋めていない）。</li>
+</ul>
+<h3>未判定の項目</h3>
+<ul class="blindspots">
+<li>D2　繰り返す仕事が、人が起動しなくても始まり、直近30日に動いた</li><li>D4　役割の違うエージェントが、人を挟まずに続けて動いた記録が1件以上ある</li>
+</ul>
+<p class="note">「測定できず」は点数の分母から外している（×にはしていない）。</p>
+<footer class="pagefoot">見ていないもの</footer>
+</section>
+</body>
+</html>

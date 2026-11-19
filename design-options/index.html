@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'">
+<title>ハーネス点検｜レポートのデザイン比較</title>
+<style>
+:root {color-scheme:light; --paper:#fff; --ground:#f1f0eb; --ink:#222721; --muted:#515b51; --line:#dcded4; --accent:#28644e; --tint:#e9f1e9; --alert:#933c26; --serif:"Hiragino Mincho ProN","Yu Mincho",serif}
+* {box-sizing:border-box}
+html {scroll-behavior:smooth}
+body {margin:0; background:var(--ground); color:var(--ink); font:16px/1.65 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif; font-feature-settings:"palt"}
+main {width:min(calc(100% - 40px),1112px); margin:0 auto}
+h1,h2,h3,p,figure,ol,ul {margin:0}
+h1,h2,h3 {line-height:1.26; text-wrap:balance}
+h2 {font-size:clamp(1.5rem,3.5vw,2.2rem)}
+h3 {font-size:1rem}
+a {color:inherit; text-underline-offset:.2em}
+a:focus-visible {outline:3px solid var(--accent); outline-offset:3px}
+.top {display:flex; flex-wrap:wrap; gap:12px 24px; justify-content:space-between; align-items:center; padding:20px 0; font-size:.85rem; font-weight:700}
+.kicker {font-size:.83rem; font-weight:750; color:var(--accent); letter-spacing:.1em}
+.muted,.note {color:var(--muted); font-size:.85rem}
+.num {font-variant-numeric:tabular-nums; font-feature-settings:"tnum"}
+section.block {padding:40px 0; border-bottom:1px solid var(--line)}
+.grid {display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:24px}
+.panel {background:var(--paper); border:1px solid var(--line); padding:clamp(18px,3vw,34px)}
+.panel h2 + p,.panel h2 + .catalog-group {margin-top:14px}
+.rate {display:grid; grid-template-columns:6em 1fr 3em; gap:10px; align-items:center; margin-top:14px; font-size:.9rem}
+.rate strong {text-align:right}
+.track {background:var(--tint); height:9px; border-radius:9px; overflow:hidden}
+.track span {background:var(--accent); display:block; height:100%}
+.fixes {padding:0; list-style:none; counter-reset:fix}
+.fixes li {counter-increment:fix; display:grid; grid-template-columns:2.1rem auto; align-items:baseline; gap:10px; padding:13px 0; border-top:1px solid var(--line); font-weight:700}
+.fixes li:first-child {margin-top:16px}
+.fixes li::before {content:counter(fix,decimal-leading-zero); color:var(--alert); font-variant-numeric:tabular-nums; font-size:.86em}
+.fixes small {display:block; font-weight:500; color:var(--muted)}
+.catalog-group {margin-top:14px}
+.catalog-group h3 {margin:0 0 3px}
+.catalog-group p {color:var(--muted); font-size:.8rem}
+table {width:100%; border-collapse:collapse; font-size:.88rem; text-align:left}
+th,td {padding:7px 8px; vertical-align:top; border-bottom:1px solid var(--line)}
+thead {display:table-header-group}
+tr {break-inside:avoid}
+thead th {color:var(--muted); background:var(--tint); font-size:.8rem}
+.counttable {margin-top:6px}
+.counttable th[scope=row] {width:9rem; font-weight:600}
+.folder-tree,.folder-tree ul {list-style:none; padding:0}
+.folder-tree {margin-top:16px; font-size:.87rem}
+.folder-tree ul {padding-left:13px; margin-left:6px; border-left:1px solid var(--line)}
+.folder-tree li {margin:5px 0}
+.folder-tree > li + li {padding-top:9px; border-top:1px solid var(--line)}
+.folder-tree span {color:var(--muted); font-size:.79rem}
+.page-foot {margin:24px 0 40px; color:var(--muted); font-size:.78rem}
+.item-group {margin-top:18px}
+.item-group h3 {margin-bottom:6px}
+.items th:first-child {width:4em}
+.items td:last-child {width:6em}
+.items .fail td:last-child {color:var(--alert); font-weight:700}
+.reason {color:var(--muted); font-size:.8em; display:block}
+.comparison {display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px 24px; margin:16px 0 0}
+.comparison dt {font-size:.75rem; color:var(--muted); font-weight:700}
+.comparison dd {margin:2px 0 0}
+@media(max-width:740px){.grid {grid-template-columns:1fr} .counttable th[scope=row] {width:6rem}}
+@media print {
+ @page {size:A4; margin:12mm 14mm}
+ body {background:white; font-size:10pt; print-color-adjust:exact; -webkit-print-color-adjust:exact}
+ main {width:auto}
+ .top,.page-foot a {display:none}
+ .panel {padding:4mm}
+ section.block {padding:7mm 0}
+ h2,h3 {break-after:avoid}
+}
+
+:root {--ground:#f5f2ea; --line:#d8d4c8; --ink:#232920; --muted:#535b50; --accent:#385640}
+.index-lead {padding:clamp(28px,6vw,76px) 0 30px; border-bottom:1px solid var(--ink)}
+.index-lead h1 {font:750 clamp(2.65rem,7vw,5.8rem)/1.12 var(--serif); letter-spacing:-.055em; margin:8px 0 16px}
+.index-lead p {max-width:50em}
+.proposal-feature {display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.5fr); margin:24px 0 32px; border:1px solid #e7deda; background:#fff; color:#231815}
+.proposal-preview {display:grid; place-items:center; padding:16px; background:#f2efec; text-decoration:none}
+.proposal-sheet {width:min(100%,185px); min-height:172px; padding:15px; background:#fff; box-shadow:0 2px 5px #23181514}
+.proposal-sheet b {font-size:1.05rem; display:block; line-height:1.3; margin:8px 0 12px}
+.proposal-sheet i {display:block; height:4px; background:#e7deda; margin:6px 0}
+.proposal-sheet i:nth-of-type(2) {width:75%; background:#231815}
+.proposal-sheet small {display:block; font-size:.67rem; color:#655e5b}
+.proposal-feature .option-body {align-self:center; padding:22px}
+.proposal-feature .option-body p {margin:7px 0 0}
+.old-heading {margin-bottom:12px; font-size:1.3rem}
+@media (max-width:620px) {.proposal-feature {grid-template-columns:1fr}}
+.cards {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.option {background:white;border:1px solid var(--line);min-width:0;display:flex;flex-direction:column}
+.option-body {padding:19px;flex:1}
+.option h2 {font-size:clamp(1.3rem,3.1vw,1.72rem)}
+.option .comparison {font-size:.83rem;gap:10px 15px}
+.preview {display:block; padding:18px 20px; border-bottom:1px solid var(--line); height:177px; text-decoration:none}
+.preview:focus-visible {outline-offset:-6px}
+.preview .mock-title {display:block; font-weight:760; line-height:1.2}
+.mock-dashboard {background:#123c3b;color:#fff;display:grid;grid-template-columns:1fr 4.5rem;gap:8px;align-content:center}
+.mock-dashboard .mock-title {font-size:1.8rem; grid-row:1}
+.mock-dashboard strong {font-size:2.65rem; line-height:1}
+.mock-dashboard i {grid-column:1/-1;display:block;height:7px;background:linear-gradient(90deg,#a8d6cb 62%,#486866 62%);margin-right:16px}
+.mock-dashboard i + i {background:linear-gradient(90deg,#a8d6cb 100%,#486866 100%)}
+.mock-action {background:#fbf8f0;color:#30271f}
+.mock-action .mock-title {font:750 1.22rem/1.3 var(--serif);margin-bottom:6px}
+.mock-action p {padding:5px 0; border-top:1px solid #dfd7c9; font-size:.77rem}
+.mock-map {background:#ebedf6;color:#1b2554}
+.mock-map .mock-title {font-size:1.3rem}
+.mini-map {display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:9px;font-size:.68rem}
+.mini-map span {display:block;padding:3px 5px;margin-bottom:3px;border-left:2px solid #5670da;background:white}
+.mini-map .gap {border-color:#88371c;background:#fbede5}
+.mock-print {background:#e7e5df;color:#161917;display:grid;place-items:center}
+.mini-sheet {background:white;padding:10px 12px;width:min(70%,210px);box-shadow:0 2px 4px #0002}
+.mini-sheet .mock-title {border-top:1px solid; font-family:var(--serif); padding-top:5px;margin-bottom:4px}
+.mini-sheet p {font-size:.65rem}
+.mini-sheet hr {margin:3px 0;border:0;border-top:1px solid #c9c9bd}
+.open {display:inline-block;font-weight:700;margin-top:15px;font-size:.84rem}
+@media(max-width:640px){.cards {grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<header class="index-lead"><p class="kicker">ハーネス点検</p>
+<h1>レポートのデザイン比較</h1>
+<p>提案書デザインで組み直した実機レポートと、以前の見本4案を確認できます。</p>
+</header>
+<article class="proposal-feature">
+<a class="proposal-preview" href="proposal.html" aria-label="提案書デザイン版を開く">
+<span class="proposal-sheet"><small>ハーネス点検レポート</small><b>AI作業レポート</b><i></i><i></i><i></i><small>点数と4本の柱の達成率</small></span></a>
+<div class="option-body"><h2>提案書デザイン版（新）</h2>
+<p>表紙で総合点と4本の柱を示し、次に直す項目、判定の理由、道具とフォルダの構成をA4縦で順に読めます。</p>
+<a class="open" href="proposal.html">実機レポートを見る →</a></div>
+</article>
+<h2 class="old-heading">以前の4案</h2>
+<p class="note">以下の4案は同じ見本データ（82点、20項目中20項目を判定）を使用しています。</p>
+<div class="cards">
+<article class="option"><a class="preview mock-dashboard" href="dashboard.html" aria-label="整理した計器盤の見本を見る"><span class="mock-title">点検レポート</span><strong>82</strong><i></i><i></i><i></i></a><div class="option-body"><h2>整理した計器盤</h2>
+<dl class="comparison"><div><dt>狙い</dt><dd>日々の変化を見る</dd></div><div><dt>向く読み手</dt><dd>定期的に自分の点検結果を見直す人</dd></div><div><dt>良い所</dt><dd>点数と達成率、使い方を一度に見渡せる</dd></div><div><dt>弱い所</dt><dd>初見では指標が多く、直す項目まで視線の移動がある</dd></div>
+</dl><a class="open" href="dashboard.html">レポート全体を見る →</a></div>
+</article>
+<article class="option"><a class="preview mock-action" href="action.html" aria-label="結論から読むの見本を見る"><span class="mock-title">安全と任せ方は強い<br>次は説明と記録を整える</span><p>01　説明に用途と使う場面を書く</p><p>02　会話の区切りで記録を残す</p></a><div class="option-body"><h2>結論から読む</h2>
+<dl class="comparison"><div><dt>狙い</dt><dd>点数と次に直す箇所を最初に見せる</dd></div><div><dt>向く読み手</dt><dd>点検を初めて受ける人、短時間で意思決定したい人</dd></div><div><dt>良い所</dt><dd>次に直す内容が、点数の意味と一緒に伝わる</dd></div><div><dt>弱い所</dt><dd>日ごとの変化や構成を比べるには下に移動する必要がある</dd></div>
+</dl><a class="open" href="action.html">レポート全体を見る →</a></div>
+</article>
+<article class="option"><a class="preview mock-map" href="map.html" aria-label="部品の地図の見本を見る"><span class="mock-title">ハーネスの部品地図</span><div class="mini-map"><div><span>指示書</span><span>スキル</span><span>エージェント</span></div><div><span>コネクタ</span><span>定時実行</span></div><div><span>終了時のフック</span><span class="gap">記録</span></div></div></a><div class="option-body"><h2>部品の地図</h2>
+<dl class="comparison"><div><dt>狙い</dt><dd>7つの部品と役割を一枚に置く</dd></div><div><dt>向く読み手</dt><dd>AIの環境を初めて組み立てる人、研修の説明役</dd></div><div><dt>良い所</dt><dd>仕組みの抜けや、ある部品と働きの違いを説明しやすい</dd></div><div><dt>弱い所</dt><dd>部品の有無を表示する分、採点を知るには別の表を見る必要がある</dd></div>
+</dl><a class="open" href="map.html">レポート全体を見る →</a></div>
+</article>
+<article class="option"><a class="preview mock-print" href="print.html" aria-label="配布できるA4の見本を見る"><div class="mini-sheet"><span class="mock-title">点検の結果と<br>次に直す項目</span><p>総合点　82 / 100</p><hr><p>次に直す項目</p><hr><p>柱ごとの達成率</p><hr><p>土台 ／ 安全 ／ 育つ仕組み ／ 任せ方</p></div></a><div class="option-body"><h2>配布できるA4</h2>
+<dl class="comparison"><div><dt>狙い</dt><dd>結論・構成・判定の順に印刷する</dd></div><div><dt>向く読み手</dt><dd>紙で配布したい人、複数人で同じ点検結果を読みたい人</dd></div><div><dt>良い所</dt><dd>白黒印刷で読め、読み進める順が固定される</dd></div><div><dt>弱い所</dt><dd>スマートフォンで前後の情報を比べにくい</dd></div>
+</dl><a class="open" href="print.html">レポート全体を見る →</a></div>
+</article></div>
+<footer class="page-foot">テスト用の見本データを使用しています。</footer></main>
+</body>
+</html>

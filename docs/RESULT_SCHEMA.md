@@ -2,9 +2,11 @@
 
 このファイルが `result.json` の形の正本です。受け取る側（ひな形・受付・管理画面）は、このファイルだけを見て実装できるように書いています。
 
-`render.py`（および差し替え先のひな形）が読むのは `result.json` だけです。`facts.json` や `ai_judgments.json` の形が変わっても、`result.json` の形が変わらなければ、ひな形は直す必要がありません。
+`render.py` は `result.json` から採点結果を描画します。同じ点検の `facts.json` に `report_details` があれば、ローカルレポートに匿名のスキル・エージェント一覧とフォルダ構成を加えます。従来どおり、`result.json` 単体から採点レポートを作れます。
 
 `score.py` が `harness-check-output/result.json` に書き出します。
+
+ローカル補足の追加によるスキーマ変更はありません。`report_details` とその内訳は送信対象の `result.json` に入れません。スキル・エージェントの本数は既存の `tool_counts` で、従来の数え方のまま伝えます。既存の匿名の説明一覧 `inventory` は別の項目です。
 
 ## 形
 

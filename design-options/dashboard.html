@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'">
+<title>整理した計器盤｜ハーネス点検</title>
+<style>
+:root {color-scheme:light; --paper:#fff; --ground:#f1f0eb; --ink:#222721; --muted:#515b51; --line:#dcded4; --accent:#28644e; --tint:#e9f1e9; --alert:#933c26; --serif:"Hiragino Mincho ProN","Yu Mincho",serif}
+* {box-sizing:border-box}
+html {scroll-behavior:smooth}
+body {margin:0; background:var(--ground); color:var(--ink); font:16px/1.65 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif; font-feature-settings:"palt"}
+main {width:min(calc(100% - 40px),1112px); margin:0 auto}
+h1,h2,h3,p,figure,ol,ul {margin:0}
+h1,h2,h3 {line-height:1.26; text-wrap:balance}
+h2 {font-size:clamp(1.5rem,3.5vw,2.2rem)}
+h3 {font-size:1rem}
+a {color:inherit; text-underline-offset:.2em}
+a:focus-visible {outline:3px solid var(--accent); outline-offset:3px}
+.top {display:flex; flex-wrap:wrap; gap:12px 24px; justify-content:space-between; align-items:center; padding:20px 0; font-size:.85rem; font-weight:700}
+.kicker {font-size:.83rem; font-weight:750; color:var(--accent); letter-spacing:.1em}
+.muted,.note {color:var(--muted); font-size:.85rem}
+.num {font-variant-numeric:tabular-nums; font-feature-settings:"tnum"}
+section.block {padding:40px 0; border-bottom:1px solid var(--line)}
+.grid {display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:24px}
+.panel {background:var(--paper); border:1px solid var(--line); padding:clamp(18px,3vw,34px)}
+.panel h2 + p,.panel h2 + .catalog-group {margin-top:14px}
+.rate {display:grid; grid-template-columns:6em 1fr 3em; gap:10px; align-items:center; margin-top:14px; font-size:.9rem}
+.rate strong {text-align:right}
+.track {background:var(--tint); height:9px; border-radius:9px; overflow:hidden}
+.track span {background:var(--accent); display:block; height:100%}
+.fixes {padding:0; list-style:none; counter-reset:fix}
+.fixes li {counter-increment:fix; display:grid; grid-template-columns:2.1rem auto; align-items:baseline; gap:10px; padding:13px 0; border-top:1px solid var(--line); font-weight:700}
+.fixes li:first-child {margin-top:16px}
+.fixes li::before {content:counter(fix,decimal-leading-zero); color:var(--alert); font-variant-numeric:tabular-nums; font-size:.86em}
+.fixes small {display:block; font-weight:500; color:var(--muted)}
+.catalog-group {margin-top:14px}
+.catalog-group h3 {margin:0 0 3px}
+.catalog-group p {color:var(--muted); font-size:.8rem}
+table {width:100%; border-collapse:collapse; font-size:.88rem; text-align:left}
+th,td {padding:7px 8px; vertical-align:top; border-bottom:1px solid var(--line)}
+thead {display:table-header-group}
+tr {break-inside:avoid}
+thead th {color:var(--muted); background:var(--tint); font-size:.8rem}
+.counttable {margin-top:6px}
+.counttable th[scope=row] {width:9rem; font-weight:600}
+.folder-tree,.folder-tree ul {list-style:none; padding:0}
+.folder-tree {margin-top:16px; font-size:.87rem}
+.folder-tree ul {padding-left:13px; margin-left:6px; border-left:1px solid var(--line)}
+.folder-tree li {margin:5px 0}
+.folder-tree > li + li {padding-top:9px; border-top:1px solid var(--line)}
+.folder-tree span {color:var(--muted); font-size:.79rem}
+.page-foot {margin:24px 0 40px; color:var(--muted); font-size:.78rem}
+.item-group {margin-top:18px}
+.item-group h3 {margin-bottom:6px}
+.items th:first-child {width:4em}
+.items td:last-child {width:6em}
+.items .fail td:last-child {color:var(--alert); font-weight:700}
+.reason {color:var(--muted); font-size:.8em; display:block}
+.comparison {display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px 24px; margin:16px 0 0}
+.comparison dt {font-size:.75rem; color:var(--muted); font-weight:700}
+.comparison dd {margin:2px 0 0}
+@media(max-width:740px){.grid {grid-template-columns:1fr} .counttable th[scope=row] {width:6rem}}
+@media print {
+ @page {size:A4; margin:12mm 14mm}
+ body {background:white; font-size:10pt; print-color-adjust:exact; -webkit-print-color-adjust:exact}
+ main {width:auto}
+ .top,.page-foot a {display:none}
+ .panel {padding:4mm}
+ section.block {padding:7mm 0}
+ h2,h3 {break-after:avoid}
+}
+
+:root {--ground:#e9eeed; --line:#cedbd8; --accent:#15605a; --tint:#e2f0ec}
+.dashboard-lead {background:#123c3b; color:#faffff; display:grid; grid-template-columns:minmax(0,1.5fr) minmax(13rem,.6fr); gap:24px; align-items:center; padding:clamp(26px,6vw,64px); border-radius:10px}
+.dashboard-lead .kicker,.dashboard-lead .muted {color:#b8ded7}
+.dashboard-lead h1 {font-size:clamp(2.5rem,6.5vw,5.2rem); letter-spacing:-.07em; margin:8px 0 10px}
+.scoreboard {border-left:1px solid #75a5a0; padding-left:28px}
+.scoreboard b {font-size:clamp(3.5rem,8vw,6rem); letter-spacing:-.06em; line-height:1.08}
+.kpis {display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin-top:14px; gap:10px}
+.kpis div {background:#fbfdfc; border:1px solid var(--line); padding:14px; border-radius:6px}
+.kpis strong {display:block; font-size:clamp(1.1rem,3.6vw,1.7rem); line-height:1.2}
+@media(max-width:600px){.dashboard-lead {grid-template-columns:1fr} .scoreboard {border-left:0; border-top:1px solid #75a5a0; padding:10px 0 0} .kpis {grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body><main>
+<nav class="top" aria-label="案の移動"><a href="index.html">← デザイン案の比較</a><span>整理した計器盤 ／ テスト用の見本</span>
+</nav>
+<header class="dashboard-lead"><div><p class="kicker">ハーネス点検</p>
+<h1>点検レポート</h1><p>AIを使うための設定・指示・道具を点検した結果</p></div>
+<div class="scoreboard"><p class="muted">総合点</p><b class="num">82</b> / 100<p>安全、任せ方が強い型</p></div>
+</header>
+<div class="kpis"><div><strong class="num">4本</strong><span class="muted">自分で用意したスキル</span></div><div><strong class="num">3件</strong><span class="muted">自分で用意したエージェント</span></div><div><strong class="num">1回</strong><span class="muted">30日間のコネクタ呼び出し</span></div><div><strong class="num">20 / 20</strong><span class="muted">判定できた項目</span></div></div>
+<section class="block grid"><div class="panel"><h2>柱ごとの達成率</h2><div class="rate"><span>土台</span><div class="track" aria-hidden="true"><span style="width:62%"></span></div><strong>62%</strong></div><div class="rate"><span>安全</span><div class="track" aria-hidden="true"><span style="width:100%"></span></div><strong>100%</strong></div><div class="rate"><span>育つ仕組み</span><div class="track" aria-hidden="true"><span style="width:67%"></span></div><strong>67%</strong></div><div class="rate"><span>任せ方</span><div class="track" aria-hidden="true"><span style="width:100%"></span></div><strong>100%</strong></div></div><div class="panel"><h2>次に直す項目</h2><ol class="fixes"><li><div>スキルの説明文に「何をするか」と「いつ使うか」を書き足す<small>土台 ／ F7</small></div></li><li><div>会話の終わりや区切りで記録が残る仕組みを足す<small>育つ仕組み ／ G3</small></div></li></ol></div>
+</section>
+<section id="construction" class="block grid">
+    <div class="panel"><h2 class="first">スキル・エージェント一覧</h2><p class="note">番号は置き場所ごとに割り当てています。プラグインはキャッシュにある定義を版ごとに数え、有効化の状態は未確認です。</p><div class="catalog-group"><h3>Claude Code ／ 個人</h3><p>スキル 2件　エージェント 2件</p>
+<table class="counttable catalog-table">
+<thead>
+<tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th>
+</tr>
+</thead>
+<tbody>
+<tr><th scope="row">スキル 1</th><td>用途を判別できませんでした</td>
+</tr>
+<tr><th scope="row">スキル 2</th><td>メールの内容を確認したり、下書きを作ったりする</td>
+</tr>
+<tr><th scope="row">エージェント 1</th><td>用途を判別できませんでした</td>
+</tr>
+<tr><th scope="row">エージェント 2</th><td>用途を判別できませんでした</td>
+</tr>
+</tbody>
+</table></div><div class="catalog-group"><h3>Claude Code ／ 書庫（作業フォルダ）</h3><p>スキル 1件　エージェント 0件</p>
+<table class="counttable catalog-table">
+<thead>
+<tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th>
+</tr>
+</thead>
+<tbody>
+<tr><th scope="row">スキル 1</th><td>情報を探して整理する</td>
+</tr>
+</tbody>
+</table></div><div class="catalog-group"><h3>Claude Code ／ プラグインキャッシュ</h3><p>スキル 1件　エージェント 0件</p>
+<table class="counttable catalog-table">
+<thead>
+<tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th>
+</tr>
+</thead>
+<tbody>
+<tr><th scope="row">スキル 1</th><td>画像や図を作成したり編集したりする</td>
+</tr>
+</tbody>
+</table></div><div class="catalog-group"><h3>Codex ／ 個人</h3><p>スキル 1件　エージェント 2件</p>
+<table class="counttable catalog-table">
+<thead>
+<tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th>
+</tr>
+</thead>
+<tbody>
+<tr><th scope="row">スキル 1</th><td>用途を判別できませんでした</td>
+</tr>
+<tr><th scope="row">エージェント 1</th><td>用途を判別できませんでした</td>
+</tr>
+<tr><th scope="row">エージェント 2</th><td>成果物や設定を確認し、問題点を見つける</td>
+</tr>
+</tbody>
+</table></div><div class="catalog-group"><h3>Codex ／ 書庫（作業フォルダ）</h3><p>スキル 0件　エージェント 0件</p></div><div class="catalog-group"><h3>Codex ／ プラグインキャッシュ</h3><p>スキル 1件　エージェント 0件</p>
+<table class="counttable catalog-table">
+<thead>
+<tr><th scope="col">仮の名前</th><th scope="col">説明から推定した用途</th>
+</tr>
+</thead>
+<tbody>
+<tr><th scope="row">スキル 1</th><td>文書や資料の作成や編集を支援する</td>
+</tr>
+</tbody>
+</table></div></div>
+    <div class="panel"><h2 class="first">フォルダの構成</h2><p class="note">名前は伏せて、直下の件数を表示しています。最大3階層まで表示し、件数の多いフォルダは内訳を省略します。リンク先、内部の履歴管理フォルダ、出力先は対象外です。</p><ul class="folder-tree"><li><b>作業フォルダ</b> <span>ファイル 2件・フォルダ 4件</span><ul><li><b>フォルダ 1</b> <span>ファイル 0件・フォルダ 2件</span><ul><li><b>フォルダ 1</b> <span>ファイル 1件・フォルダ 0件</span></li><li><b>フォルダ 2</b> <span>ファイル 0件・フォルダ 1件</span><ul><li><b>フォルダ 1</b> <span>ファイル 1件・フォルダ 0件</span></li></ul></li></ul></li><li><b>フォルダ 2</b> <span>ファイル 0件・フォルダ 2件</span><ul><li><b>フォルダ 1</b> <span>ファイル 1件・フォルダ 0件</span></li><li><b>フォルダ 2</b> <span>ファイル 1件・フォルダ 0件</span></li></ul></li><li><b>フォルダ 3</b> <span>ファイル 0件・フォルダ 1件</span><ul><li><b>フォルダ 1</b> <span>ファイル 1件・フォルダ 0件</span></li></ul></li><li><b>フォルダ 4</b> <span>ファイル 0件・フォルダ 1件</span><ul><li><b>フォルダ 1</b> <span>ファイル 1件・フォルダ 0件</span></li></ul></li></ul></li><li><b>Claude Code</b> <span>ファイル 3件・フォルダ 6件</span><ul><li><b>フォルダ 1</b> <span>ファイル 2件・フォルダ 0件</span></li><li><b>フォルダ 2</b> <span>ファイル 0件・フォルダ 1件</span><ul><li><b>フォルダ 1</b> <span>ファイル 0件・フォルダ 1件</span><ul><li><b>フォルダ 1</b> <span>ファイル 0件・フォルダ 1件・内訳省略</span></li></ul></li></ul></li><li><b>フォルダ 3</b> <span>ファイル 0件・フォルダ 1件</span><ul><li><b>フォルダ 1</b> <span>ファイル 1件・フォルダ 0件</span></li></ul></li><li><b>フォルダ 4</b> <span>ファイル 1件・フォルダ 0件</span></li><li><b>フォルダ 5</b> <span>ファイル 0件・フォルダ 1件</span><ul><li><b>フォルダ 1</b> <span>ファイル 1件・フォルダ 0件</span></li></ul></li><li><b>フォルダ 6</b> <span>ファイル 0件・フォルダ 2件</span><ul><li><b>フォルダ 1</b> <span>ファイル 1件・フォルダ 0件</span></li><li><b>フォルダ 2</b> <span>ファイル 1件・フォルダ 0件</span></li></ul></li></ul></li><li><b>Codex</b> <span>ファイル 3件・フォルダ 3件</span><ul><li><b>フォルダ 1</b> <span>ファイル 2件・フォルダ 0件</span></li><li><b>フォルダ 2</b> <span>ファイル 0件・フォルダ 1件</span><ul><li><b>フォルダ 1</b> <span>ファイル 1件・フォルダ 0件</span></li></ul></li><li><b>フォルダ 3</b> <span>ファイル 0件・フォルダ 1件</span><ul><li><b>フォルダ 1</b> <span>ファイル 0件・フォルダ 1件</span><ul><li><b>フォルダ 1</b> <span>ファイル 0件・フォルダ 1件・内訳省略</span></li></ul></li></ul></li></ul></li></ul></div>
+    </section>
+<section class="block" id="judgments"><h2>項目ごとの判定</h2><div class="item-group"><h3>土台</h3>
+<table class="items">
+<thead>
+<tr><th scope="col">項目</th><th scope="col">基準と判定理由</th><th scope="col">結果</th>
+</tr>
+</thead>
+<tbody>
+<tr class="pass"><th scope="row">F1</th><td>作業フォルダに指示書がある<span class="reason">Claude Codeでは、作業フォルダからGitの一番上のフォルダまでに指示書が1件あり、1件以上という基準を満たしています。Codexでは、作業フォルダからGitの一番上のフォルダまでに指示書が1件あり、1件以上という基準を満たしています。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">F2</th><td>毎回読まれる指示ファイルが、どれも長すぎない<span class="reason">Claude Codeでは、毎回読まれる指示ファイルが4件あり、いちばん長いものは8行で、どれも200行未満という目安に収まっています。Codexでは、読まれる指示書が1件で合計245バイトあり、合計32768バイト未満という目安に収まっています。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">F3</th><td>指示が具体的で、守れたか確かめられるか<span class="reason">Claude Codeでは、作業フォルダの指示書1件をAIが2回読み、2回とも、指示が具体的で、守れたか確かめられる書き方になっていると判定しました。Codexでは、作業フォルダの指示書1件をAIが2回読み、2回とも、指示が具体的で、守れたか確かめられる書き方になっていると判定しました。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">F4</th><td>矛盾する指示がない<span class="reason">Claude Codeでは、起動時に読まれる指示ファイル4件をAIが2回読み、2回とも、互いに矛盾する指示は無いと判定しました。Codexでは、起動時に読まれる指示ファイル1件をAIが2回読み、2回とも、互いに矛盾する指示は無いと判定しました。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">F6</th><td>自分で用意したスキルが、直近30日に1回以上使われた<span class="reason">Claude Codeでは、直近30日に、自分で用意したスキル3本のうち1本が合計1回使われ、1回以上という基準を満たしています。Codexでは、この項目を会話の記録から確かめる方法が無いため、判定できませんでした。</span></td><td>満たす</td>
+</tr>
+<tr class="fail"><th scope="row">F7</th><td>スキルの説明文に「何をするか」と「いつ使うか」がある<span class="reason">Claude Codeでは、自分で用意したスキルの説明文1件をAIが2回読み、2回とも、「何をするか」か「いつ使うか」が欠けているものがあると判定しました。Codexでは、自分で用意したスキルの説明文1件をAIが2回読み、2回とも、「何をするか」か「いつ使うか」が欠けているものがあると判定しました。</span></td><td>満たさず</td>
+</tr>
+<tr class="pass"><th scope="row">F9</th><td>自分で定義したエージェントが、直近30日に1回以上使われた<span class="reason">Claude Codeでは、直近30日に、自分で定義したエージェント2件のうち2件が合計2回使われ、1回以上という基準を満たしています。Codexでは、この項目を会話の記録から確かめる方法が無いため、判定できませんでした。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">F11</th><td>コネクタが、直近30日に1回以上使われた<span class="reason">Claude Codeでは、直近30日に、コネクタの呼び出しが1回あり、1回以上という基準を満たしています。Codexでは、会話の記録が見つからなかったため、判定できませんでした。</span></td><td>満たす</td>
+</tr>
+</tbody>
+</table></div><div class="item-group"><h3>安全</h3>
+<table class="items">
+<thead>
+<tr><th scope="col">項目</th><th scope="col">基準と判定理由</th><th scope="col">結果</th>
+</tr>
+</thead>
+<tbody>
+<tr class="pass"><th scope="row">S1</th><td>よくある形のキーが、コードや設定に直接書かれていない<span class="reason">作業フォルダのGit管理下のファイル8個と設定ファイル3個を調べ、よくある形のキーは0件で、0件という基準を満たしています。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">S2</th><td>秘密ファイル（.env 系と鍵・認証情報系）を読ませない設定がある<span class="reason">Claude Codeでは、秘密ファイルの読み取りの2系統すべてを、禁止か承認の設定かフックで止めていて、基準を満たしています。Codexでは、この項目を設定から確かめる方法が無いため、判定できませんでした。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">S3</th><td>取り返しのつかない操作（消す・強制上書き・外へ出す）が、すべて承認制か禁止になっている<span class="reason">Claude Codeでは、取り返しのつかない操作の3系統すべてを、禁止か承認の設定かフックで止めていて、基準を満たしています。Codexでは、承認の方式は「確認しない」ではなく、制限なしの実行モードでもないため、基準を満たしています。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">S4</th><td>既定のモードが「全部許す」になっていない<span class="reason">Claude Codeでは、既定のモードは確認をすべて省くモードではなく、基準を満たしています。Codexでは、「確認しない」と「制限なし」の組み合わせにはなっておらず、基準を満たしています。</span></td><td>満たす</td>
+</tr>
+</tbody>
+</table></div><div class="item-group"><h3>育つ仕組み</h3>
+<table class="items">
+<thead>
+<tr><th scope="col">項目</th><th scope="col">基準と判定理由</th><th scope="col">結果</th>
+</tr>
+</thead>
+<tbody>
+<tr class="pass"><th scope="row">G1</th><td>指示書がGitで管理され、リモートにもある<span class="reason">作業フォルダはGitで管理され、リモートがあり、指示書もGitの管理下にあるため、基準を満たしています。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">G2</th><td>個人用と共有用の指示が分かれている<span class="reason">全体用の指示書と作業フォルダ用の指示書の両方に中身があり、基準を満たしています。</span></td><td>満たす</td>
+</tr>
+<tr class="fail"><th scope="row">G3</th><td>人が書かなくても、記録が残る仕組みがある<span class="reason">終わりや区切りで動くフック2件と定時実行2件の中身をAIが2回読み、2回とも、記録を残す仕組みではないと判定しました。</span></td><td>満たさず</td>
+</tr>
+</tbody>
+</table></div><div class="item-group"><h3>任せ方</h3>
+<table class="items">
+<thead>
+<tr><th scope="col">項目</th><th scope="col">基準と判定理由</th><th scope="col">結果</th>
+</tr>
+</thead>
+<tbody>
+<tr class="pass"><th scope="row">D1</th><td>いつもの安全な操作は、確認なしで通る<span class="reason">Claude Codeでは、確認なしで通す許可の設定が2行あり、1行以上という基準を満たしています。Codexでは、承認の方式は毎回確認する方式ではなく、基準を満たしています。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">D2</th><td>繰り返す仕事が、人が起動しなくても始まり、直近30日に動いた<span class="reason">Claude Codeでは、定時実行の定義が1件あり、直近30日に出力かログが更新されていて、基準を満たしています。Codexでは、定時実行の定義が1件あり、直近30日に出力かログが更新されていて、基準を満たしています。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">D3</th><td>終わる前の確認を、仕組みがやっている<span class="reason">Claude Codeでは、終了時に動くフックが1件、読むだけの確認役のエージェントが0件で、どちらか1件以上という基準を満たしています。Codexでは、終了時に動くフックがあり、1件以上という基準を満たしています。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">D4</th><td>役割の違うエージェントが、人を挟まずに続けて動いた記録が1件以上ある<span class="reason">Claude Codeでは、人の発言を挟まずに自作のエージェントが2種類以上続けて動いた会話が1件あり、1件以上という基準を満たしています。Codexでは、この項目を会話の記録から確かめる方法が無いため、判定できませんでした。</span></td><td>満たす</td>
+</tr>
+<tr class="pass"><th scope="row">D5</th><td>人の発言を挟まずに、20回以上続けて動いた会話が1件以上ある<span class="reason">Claude Codeでは、直近30日の会話で、人の発言を挟まずに続いた道具の呼び出しは最長26回で、20回以上という基準を満たしています。Codexでは、会話の記録が見つからなかったため、判定できませんでした。</span></td><td>満たす</td>
+</tr>
+</tbody>
+</table></div>
+</section>
+<section class="block web-only"><h2>この案の使いどころ</h2>
+<dl class="comparison"><div><dt>狙い</dt><dd>日々の変化を見る</dd></div><div><dt>向く読み手</dt><dd>定期的に自分の点検結果を見直す人</dd></div><div><dt>良い所</dt><dd>点数と達成率、使い方を一度に見渡せる</dd></div><div><dt>弱い所</dt><dd>初見では指標が多く、直す項目まで視線の移動がある</dd></div>
+</dl>
+</section>
+<footer class="page-foot"><a href="index.html">デザイン案の比較に戻る</a>
+</footer></main></body>
+</html>

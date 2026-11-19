@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ハーネス点検 — result.json とひな形から HTML と PDF を出す。
+"""ハーネス点検 — 採点結果とローカル専用の補足から HTML と PDF を出す。
 
 読むだけ・通信なし。書き込みは --out で指定した出力フォルダの中だけ。
 PDF化は、利用者のPCにある Chrome のヘッドレス実行（--print-to-pdf）を使う。
@@ -17,11 +17,13 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from readers import common  # noqa: E402
+from report_details import KIND_LABELS, PURPOSE_LABELS, ROOT_LABELS, SCOPE_LABELS, TOOL_LABELS  # noqa: E402
 
 
 STATUS_MARK = {"pass": "○", "fail": "×", "unmeasured": "―"}
@@ -195,16 +197,16 @@ def _render_breadth_and_autonomy(result: dict) -> str:
     return f'<div class="breadth">{left}{right}</div>'
 
 
-def render_cover(result: dict) -> str:
+def page_head(label: str) -> str:
+    return f'<header class="pagehead"><span class="t">{esc(label)}</span></header>'
+
+
+def render_cover(result: dict, report_date: str = "") -> str:
     score = result.get("score")
     withheld = score is None
     type_name = result.get("type_name") or ""
     judged = result.get("judged_item_count", 0)
     total = result.get("total_item_count", 0)
-
-    dashboard = _render_kpis(result) + _render_daily_chart(result) + _render_breadth_and_autonomy(result)
-    dashboard_block = (f'<h2 class="first">今どれだけ使えているか<span class="sub">PCに残る会話の記録から数えた数。名前は出していない</span></h2>'
-                       f'{dashboard}') if dashboard else ""
 
     pillar_rows = []
     for pid in result["pillar_order"]:
@@ -232,34 +234,84 @@ def render_cover(result: dict) -> str:
   <div class="withheld-note">まだ測れるものが少ないため、点数と型の名前は出していません（判定できた項目が半分未満）。下の「次に直す項目」から始めてください。</div>
   <div class="judged">全{esc(total)}項目中{esc(judged)}項目を判定</div></div>"""
     else:
-        scorebox = f"""<div class="scorebox"><div class="cap">点数</div><div><span class="score-num num">{esc(score)}</span><span class="of">/ 100点</span></div>
+        ring = f'<svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="55"/><circle class="progress" cx="60" cy="60" r="55" pathLength="100" stroke-dasharray="{max(0, min(100, int(score)))} 100"/></svg>'
+        scorebox = f"""<div class="scorebox"><div class="cap">点数</div><div class="score-ring">{ring}<div><span class="score-num num">{esc(score)}</span><span class="of">/ 100点</span></div></div>
   <div class="now">{esc(type_name)}</div>
   <div class="judged">全{esc(total)}項目中{esc(judged)}項目を判定</div></div>"""
 
-    next_items = result.get("next_fixes", [])
-    if next_items:
-        lis = []
-        for i, it in enumerate(next_items, start=1):
-            fix_text = it.get("fix_text", it.get("name", ""))
-            lis.append(f"""<li><span class="n num">{i}</span><div class="body"><b>{esc(fix_text)}</b>
-<p>項目ID: {esc(it['id'])}（{esc(result['pillars'][it['pillar']]['name'])}）</p></div></li>""")
-        next_block = f"<h2>次に直す項目</h2><ol class=\"next3\">{''.join(lis)}</ol>"
-    else:
-        next_block = "<h2>次に直す項目</h2><p>×の項目はありません。</p>"
-
-    return f"""<section class="page">
-<header class="pagehead"><span class="t">ハーネス点検レポート</span><span>1 / 表紙</span></header>
+    date_line = f'<p class="cover-date">レポート作成日　{esc(report_date)}</p>' if report_date else ""
+    return f"""<section class="page cover">
+{page_head("ハーネス点検")}
+<h1>AI作業レポート</h1>
 <p class="intro">ハーネス＝AIの周りに置く設定・指示・道具の一式。<br>見ているのはPCに残る設定と記録だけ。チャット画面での利用は数えていない。</p>
-{dashboard_block}
-<h2>点数と型</h2>
+<h2>結果</h2>
 <div class="scorerow">
 {scorebox}
+<figure aria-label="4本の柱の達成率">
+<figcaption>4本の柱の達成率</figcaption>
 <table class="pillars"><tbody>
 {''.join(pillar_rows)}
 </tbody></table>
+</figure>
 </div>
-<p class="note">判定できなかった項目は分母から外している。判定できた項目が半分未満の柱は「判定不足」として、点数と型の名前に使っていない。スキル・エージェント・コネクタの使用は回数に応じた部分点なので、達成率は「満たした数／判定できた数」と一致しないことがある。</p>
-{next_block}
+<p class="note">点数は判定できた項目から計算します。判定が半分未満の柱は集計から外します。使用実績には回数に応じた部分点があるため、達成率が「満たした数／判定できた数」と異なることがあります。</p>
+{date_line}
+</section>"""
+
+
+IMPROVEMENT_PROMPTS = {
+    "F1": "この作業フォルダで使うAI向けの指示書を作ってください。既存の手順から、よく使うコマンドと作業完了前の確認事項をまとめ、不明な点は質問してください。",
+    "F2": "起動時に読む指示書を見直してください。毎回必要な指示を残し、特定の作業だけで使う手順は参照先に分ける案を出してください。",
+    "F3": "作業指示の曖昧な箇所を見つけ、実行する手順と完了を確かめる方法が分かるように書き換えてください。",
+    "F4": "この作業に適用される指示書を読み比べ、矛盾する箇所と修正案を示してください。どちらを優先するか判断できない箇所は質問してください。",
+    "F6": "繰り返している作業を一つ選べるよう候補を挙げ、選んだ作業のスキルを作ってください。見本入力で動作を確認してください。",
+    "F7": "自作スキルの説明を見直し、何をするかと、どんな依頼で使うかの両方を一文ずつ補ってください。",
+    "F9": "繰り返し行う確認作業を一つ選び、読み取りに必要な権限だけを持つエージェントを作ってください。見本の作業で試してください。",
+    "F11": "よく使う外部の道具をつなぐ方法を調べ、必要な権限と共有される情報を示してください。接続前に確認を求め、接続後は読み取りだけで試してください。",
+    "S1": "コードや設定に直接書かれた認証情報を、値を表示せずに探してください。環境変数や秘密情報の管理機能に移す変更案と、キーの再発行が必要な箇所を示してください。",
+    "S2": "AIが読む範囲の設定を確認し、.env 系のファイルと秘密鍵・認証情報の両方を読み取り対象から外す案を出してください。実際の秘密ファイルは開かず、見本で確認してください。",
+    "S3": "削除・強制上書き・外部送信に関する許可設定を確認してください。操作の種類ごとに、実行前の承認を必須にするか禁止する変更案を示してください。",
+    "S4": "AIの既定の権限を確認し、通常作業に必要な操作に絞る設定案を出してください。承認が必要になる操作も一覧にしてください。",
+    "G1": "作業用の指示書がGitの管理対象か確認してください。共有してよい内容か確認したうえで、追跡・コミット・共有の手順を示し、送信前に承認を求めてください。",
+    "G2": "個人の好みとチームで守る指示を整理し、個人用と共有用のどちらに置くか提案してください。共有側に個人情報が入らないよう確認してください。",
+    "G3": "作業の区切りで、実施したこと・確認結果・残りの作業だけをローカルに記録する仕組みを提案してください。会話本文や認証情報を記録しない形にしてください。",
+    "D1": "毎回確認を求められる操作のうち、読み取りなど影響が小さいものを挙げてください。対象と範囲を限定した許可設定を提案してください。",
+    "D2": "定期的に行う作業を一つ選び、実行時刻・入力・保存先・失敗時の通知方法を提案してください。まず見本で試し、定期実行の有効化は確認を求めてください。",
+    "D3": "作業完了前に実行する確認手順を作ってください。テスト結果や未確認の項目をまとめ、問題があれば完了として扱わない形にしてください。",
+    "D4": "作成役と確認役を分けた手順を作ってください。渡す成果物、確認項目、途中で人に判断を求める条件を決め、見本で試してください。",
+    "D5": "途中の判断を任せやすい作業を一つ選び、開始条件・完了条件・人の確認が必要な条件を決めてください。見本で一連の流れを試してください。",
+}
+
+
+def render_next_page(result: dict) -> str:
+    cards = []
+    for i, item in enumerate(result.get("next_fixes", [])[:3], start=1):
+        fix_text = item.get("fix_text", item.get("name", ""))
+        prompt = IMPROVEMENT_PROMPTS.get(
+            item["id"], f"「{fix_text}」について、現状を確認し、具体的な変更案と確認方法を示してください。"
+        )
+        pillar = result["pillars"][item["pillar"]]["name"]
+        cards.append(
+            f'<li><span class="n num">{i:02d}</span><div><b>{esc(fix_text)}</b>'
+            f'<p>{esc(pillar)} ／ {esc(item["id"])}</p>'
+            f'<div class="prompt-example"><span>たとえばこんなプロンプト</span>'
+            f'<blockquote>{esc(prompt)}</blockquote></div></div></li>'
+        )
+    content = '<ol class="next3">' + "".join(cards) + "</ol>" if cards else "<p>今回の判定で改善対象は見つかりませんでした。</p>"
+    return f"""<section class="page action-page">
+<h2>改善点</h2>
+{content}
+</section>"""
+
+
+def render_usage_page(result: dict) -> str:
+    dashboard = _render_kpis(result) + _render_daily_chart(result) + _render_breadth_and_autonomy(result)
+    if not dashboard:
+        return ""
+    return f"""<section class="page">
+<h2>直近30日の使用履歴</h2>
+<p class="lead">今月の使用量と、直近30日の利用記録を集計しています。</p>
+{dashboard}
 </section>"""
 
 
@@ -304,9 +356,10 @@ def render_pillar_pages(result: dict) -> str:
         rate_display = f"{int(round(rate * 100))}点" if rate is not None else "判定できず"
         pages.append(
             f"""<section class="page">
-<header class="pagehead"><span class="t">ハーネス点検レポート</span></header>
+{page_head("各判定基準の詳細")}
+<h2>{esc(p["name"])}</h2>
 <div class="pillar-block">
-<div class="pillar-head"><h3>{esc(p['name'])}</h3><span class="rate"><b>{esc(p['passed_count'])}</b> / {esc(p['judged_count'])}（{rate_display}）</span></div>
+<div class="pillar-head"><span>該当数 ／ 判定数</span><span class="rate"><b>{esc(p['passed_count'])}</b> / {esc(p['judged_count'])}（{rate_display}）</span></div>
 <table class="items">
 <thead><tr><th class="mk"></th><th class="name">項目</th><th class="judge">判定の種類</th><th class="note">結果</th></tr></thead>
 {''.join(rows)}
@@ -400,8 +453,8 @@ def render_reference_page(result: dict) -> str:
         names_note = ""
 
     return f"""<section class="page">
-<header class="pagehead"><span class="t">ハーネス点検レポート</span></header>
-<h2 class="first">参考の数字（直近{esc(result.get('window_days', 30))}日）</h2>
+<h2>参考データ</h2>
+<p class="lead">直近{esc(result.get('window_days', 30))}日の使用回数と設定の集計</p>
 {stat_cards}
 {body}
 <p class="note">数え方: 使用回数は会話の記録（直近30日）から数えたもの。キーらしき文字列は種類と件数のみで、値・ファイル名・行番号は出していない。</p>
@@ -423,8 +476,7 @@ def render_blindspots_page(result: dict) -> str:
     tools_line = "、".join(name for name, on in (("Claude Code", tools.get("claude_code")), ("Codex", tools.get("codex"))) if on) or "検出できなかった"
 
     return f"""<section class="page">
-<header class="pagehead"><span class="t">ハーネス点検レポート</span></header>
-<h2 class="first">この点検が見ていないもの</h2>
+<h2>点検の範囲</h2>
 <ul class="blindspots">
 <li>claude.ai や ChatGPT などの、チャット画面だけでの利用は数えていない（PCに残る記録だけを見ている）。</li>
 <li>Codex の会話の記録は、標準機能で読める形になっていないため、使用実績が要る項目は「測定できず」にしている。</li>
@@ -436,7 +488,7 @@ def render_blindspots_page(result: dict) -> str:
 <li>今月の使用時間の合計は、Claude Code と Codex の値を単純に足したもの。同時に両方を使っていた時間があれば、その分は重複して数えている。</li>
 <li>Codex のトークンは、会話の記録が圧縮されていて読めない分は足していない（推測で埋めていない）。</li>
 </ul>
-<h3>今回「測定できず」だった項目</h3>
+<h3>未判定の項目</h3>
 <ul class="blindspots">
 {unmeasured_html}
 </ul>
@@ -445,13 +497,89 @@ def render_blindspots_page(result: dict) -> str:
 </section>"""
 
 
-def build_html(template_text: str, result: dict) -> str:
-    body = (
-        render_cover(result)
-        + render_pillar_pages(result)
-        + render_reference_page(result)
-        + render_blindspots_page(result)
+def render_catalog(details: dict) -> str:
+    pages = []
+    blocks = []
+    used = 0
+    rows_per_page = 25
+    group_heading_rows = 4
+    page_budget = rows_per_page + group_heading_rows
+    for group in details.get("inventory", []):
+        tool = TOOL_LABELS.get(group.get("tool"))
+        scope = SCOPE_LABELS.get(group.get("scope"))
+        if not tool or not scope:
+            continue
+        counts = "　".join(f"{label} {len(group.get(kind, []))}件" for kind, label in KIND_LABELS.items())
+        rows = []
+        for kind, label in KIND_LABELS.items():
+            for i, purpose in enumerate(group.get(kind, []), start=1):
+                description = PURPOSE_LABELS.get(purpose, "用途を判別できませんでした")
+                rows.append(f'<tr><th scope="row">{label} {i}</th><td>{description}</td></tr>')
+        for start in range(0, max(1, len(rows)), rows_per_page):
+            chunk = rows[start:start + rows_per_page]
+            size = len(chunk) + group_heading_rows
+            if used + size > page_budget:
+                pages.append("".join(blocks))
+                blocks = []
+                used = 0
+            table = (
+                '<table class="counttable catalog-table"><thead><tr><th scope="col">仮の名前</th>'
+                '<th scope="col">説明から推定した用途</th></tr></thead><tbody>'
+                + "\n".join(chunk) + "</tbody></table>"
+            ) if chunk else ""
+            suffix = "（続き）" if start else ""
+            blocks.append(f'<div class="catalog-group"><h3>{tool} ／ {scope}{suffix}</h3><p>{counts}</p>{table}</div>')
+            used += size
+    pages.append("".join(blocks) or '<p class="note">対象の道具を検出できませんでした。</p>')
+    return "".join(
+        f"""<section class="page catalog">
+<h2>スキル・エージェント一覧{"（続き）" if i > 1 else ""}</h2>
+<p class="lead">プラグインはキャッシュにある定義を版ごとに数えています。用途は定義の説明文から推定しています。</p>
+{page}
+</section>"""
+        for i, page in enumerate(pages, start=1)
     )
+
+
+def _tree_node(label: str, node: dict) -> str:
+    if node.get("unreadable"):
+        return f'<li><div class="tree-node"><b>{label}</b><span>確認できず</span></div></li>'
+    files = int(node["files"])
+    directories = int(node["directories"])
+    children = node["children"]
+    branch = ""
+    if children:
+        branch = "<ul>" + "".join(
+            _tree_node(f"フォルダ {i}", child) for i, child in enumerate(children, start=1)
+        ) + "</ul>"
+    suffix = "・内訳省略" if directories and not children else ""
+    return f'<li><div class="tree-node"><b>{label}</b><span>ファイル {files}件・フォルダ {directories}件{suffix}</span></div>{branch}</li>'
+
+
+def render_folder_tree(details: dict) -> str:
+    trees = details.get("trees", {})
+    roots = [_tree_node(label, trees[key]) for key, label in ROOT_LABELS.items() if key in trees]
+    return f"""<section class="page">
+<h2>フォルダの構成</h2>
+<p class="lead">仮の名前で最大3階層を示します。数字は直下の件数です。直下の項目が多い場合は内訳を省略します。</p>
+<figure class="tree-diagram" aria-label="点検したフォルダの構成図">
+<ul class="folder-tree">{''.join(roots)}</ul>
+</figure>
+<p class="note">リンク先、Gitの内部フォルダ、点検結果の出力先は対象外です。</p>
+</section>"""
+
+
+def build_html(template_text: str, result: dict, details: dict | None = None) -> str:
+    report_date = datetime.now(timezone(timedelta(hours=9))).strftime("%Y年%m月%d日")
+    body = (
+        render_cover(result, report_date)
+        + render_next_page(result)
+        + render_usage_page(result)
+        + render_pillar_pages(result)
+    )
+    if details:
+        body += render_catalog(details) + render_folder_tree(details)
+    body += render_reference_page(result) + render_blindspots_page(result)
     return template_text.replace("{{BODY}}", body)
 
 
@@ -481,8 +609,19 @@ def main() -> int:
     with result_path.open("r", encoding="utf-8") as fh:
         result = json.load(fh)
 
+    details = None
+    facts_path = out_dir / "facts.json"
+    if not facts_path.is_symlink() and facts_path.is_file():
+        try:
+            with facts_path.open("r", encoding="utf-8") as fh:
+                facts = json.load(fh)
+        except (OSError, ValueError):
+            facts = {}
+        if isinstance(facts, dict) and isinstance(facts.get("report_details"), dict):
+            details = facts["report_details"]
+
     template_text = Path(args.template).read_text(encoding="utf-8")
-    full_html = build_html(template_text, result)
+    full_html = build_html(template_text, result, details)
 
     html_path = out_dir / "report.html"
     html_path.write_text(full_html, encoding="utf-8")
